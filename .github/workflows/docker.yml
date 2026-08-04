@@ -1,17 +1,29 @@
-name: Build and publish to ghcr.io
+name: Build server Docker images
 
 on:
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag used for a manual build'
+        required: true
+        default: '0.0.0-dev'
+      api_version:
+        description: 'API image tag from the current owner rustdesk-api fork'
+        required: true
+        default: '0.0.0-dev'
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
       - '[0-9]+.[0-9]+.[0-9]+'
-      - 'v[0-9]+.[0-9]+.[0-9]+-[0-9]+'
-      - '[0-9]+.[0-9]+.[0-9]+-[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+-*'
 
 env:
   CARGO_TERM_COLOR: always
   LATEST_TAG: latest
+  API_VERSION: ${{ github.event.inputs.api_version || github.ref_name }}
+  IMAGE_TAG: ${{ github.event.inputs.image_tag || github.ref_name }}
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  DOCKERHUB_TOKEN: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+  DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || secrets.DOCKER_USERNAME }}
 
 permissions:
   contents: read
@@ -34,28 +46,40 @@ jobs:
           #- { name: "amd64fb", target: "x86_64-unknown-freebsd" }
 
     steps:
+      - name: Validate versions
+        run: |
+          VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
+          if [[ ! "$IMAGE_TAG" =~ $VERSION_PATTERN ]]; then
+            echo "Invalid server version: $IMAGE_TAG"
+            exit 1
+          fi
+          if [[ ! "$API_VERSION" =~ $VERSION_PATTERN ]]; then
+            echo "Invalid API version: $API_VERSION"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
-    
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
           targets: ${{ matrix.job.target }}
           components: "rustfmt"
-          
+
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: ${{ matrix.job.os }}
+          prefix-key: ${{ matrix.job.name }}
 
       - name: Build
         uses: actions-rs/cargo@v1
         with:
           command: build
           args: --release --all-features --target=${{ matrix.job.target }}
-          use-cross: true  
+          use-cross: true
 
       - name: Exec chmod
         run: chmod -v a+x target/${{ matrix.job.target }}/release/*
@@ -69,7 +93,7 @@ jobs:
             target/${{ matrix.job.target }}/release/hbbs
             target/${{ matrix.job.target }}/release/rustdesk-utils
           if-no-files-found: error
-  
+
   # Build and push single-arch Docker images to ghcr.io
   create-s6-overlay-images:
     name: Docker push s6-overlay - ${{ matrix.job.name }}
@@ -102,7 +126,7 @@ jobs:
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
-      
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -113,7 +137,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-        
+
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
@@ -123,10 +154,10 @@ jobs:
       - name: Get git tag
         id: vars
         run: |
-          T=${GITHUB_REF#refs/*/}
-          M=${T%%.*}
+          T="${IMAGE_TAG}-api-${API_VERSION}"
+          RESOLVED_API_IMAGE="ghcr.io/${{ github.repository_owner }}/rustdesk-api:${API_VERSION}"
           echo "GIT_TAG=$T" >> $GITHUB_ENV
-          echo "MAJOR_TAG=$M" >> $GITHUB_ENV
+          echo "API_IMAGE_RESOLVED=$RESOLVED_API_IMAGE" >> $GITHUB_ENV
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -137,10 +168,12 @@ jobs:
           provenance: false
           build-args: |
             S6_ARCH=${{ matrix.job.s6_platform }}
+            API_IMAGE=${{ env.API_IMAGE_RESOLVED }}
           tags: |
-            ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
             ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}-${{ matrix.job.name }}
-            ghcr.io/${{ github.repository }}-s6:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
+            ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
+            ${{ env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != '' && format('{0}/rustdesk-server-s6:{1}-{2}', env.DOCKERHUB_NAMESPACE, env.GIT_TAG, matrix.job.name) || '' }}
+            ${{ env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != '' && format('{0}/rustdesk-server-s6:latest-{1}', env.DOCKERHUB_NAMESPACE, matrix.job.name) || '' }}
           labels: ${{ steps.meta.outputs.labels }}
 
   # Set up minifest and tag for pushed image
@@ -150,6 +183,9 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -158,50 +194,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
       - name: Get git tag
         id: vars
         run: |
-          T=${GITHUB_REF#refs/*/}
-          M=${T%%.*}
+          T="${IMAGE_TAG}-api-${API_VERSION}"
           echo "GIT_TAG=$T" >> $GITHUB_ENV
-          echo "MAJOR_TAG=$M" >> $GITHUB_ENV
 
-      # Create and push manifest for :ve.rs.ion tag
-      - name: Create and push manifest (:ve.rs.ion)
-        uses: Noelware/docker-manifest-action@master
-        if: github.event_name != 'workflow_dispatch'
-        with:
-          tags: ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}
-          inputs: |
-            ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}-amd64,
-            ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}-arm64v8,
-            ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}-armv7,
-#            ghcr.io/${{ github.repository }}-s6:${{ env.GIT_TAG }}-i386
-          push: true
+      - name: Create GHCR manifests
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}-s6
+        run: |
+          docker buildx imagetools create --tag "$IMAGE:$GIT_TAG" "$IMAGE:$GIT_TAG-amd64" "$IMAGE:$GIT_TAG-arm64v8" "$IMAGE:$GIT_TAG-armv7"
+          docker buildx imagetools create --tag "$IMAGE:$LATEST_TAG" "$IMAGE:$LATEST_TAG-amd64" "$IMAGE:$LATEST_TAG-arm64v8" "$IMAGE:$LATEST_TAG-armv7"
 
-      # Create and push manifest for :major tag
-      - name: Create and push manifest (:major)
-        uses: Noelware/docker-manifest-action@master
-        with:
-          tags: ghcr.io/${{ github.repository }}-s6:${{ env.MAJOR_TAG }}
-          inputs: |
-            ghcr.io/${{ github.repository }}-s6:${{ env.MAJOR_TAG }}-amd64,
-            ghcr.io/${{ github.repository }}-s6:${{ env.MAJOR_TAG }}-arm64v8,
-            ghcr.io/${{ github.repository }}-s6:${{ env.MAJOR_TAG }}-armv7,
-#            ghcr.io/${{ github.repository }}-s6:${{ env.MAJOR_TAG }}-i386
-          push: true
-
-      # Create and push manifest for :latest tag
-      - name: Create and push manifest (:latest)
-        uses: Noelware/docker-manifest-action@master
-        with:
-          tags: ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}
-          inputs: |
-            ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}-amd64,
-            ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}-arm64v8,
-            ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}-armv7,
-#            ghcr.io/${{ github.repository }}-s6:${{ env.LATEST_TAG }}-i386
-          push: true
+      - name: Create Docker Hub manifests
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        env:
+          IMAGE: ${{ env.DOCKERHUB_NAMESPACE }}/rustdesk-server-s6
+        run: |
+          docker buildx imagetools create --tag "$IMAGE:$GIT_TAG" "$IMAGE:$GIT_TAG-amd64" "$IMAGE:$GIT_TAG-arm64v8" "$IMAGE:$GIT_TAG-armv7"
+          docker buildx imagetools create --tag "$IMAGE:$LATEST_TAG" "$IMAGE:$LATEST_TAG-amd64" "$IMAGE:$LATEST_TAG-arm64v8" "$IMAGE:$LATEST_TAG-armv7"
 
   # Build and push single-arch Docker images to ghcr.io
   create-classic-images:
@@ -247,6 +266,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
@@ -256,10 +282,8 @@ jobs:
       - name: Get git tag
         id: vars
         run: |
-          T=${GITHUB_REF#refs/*/}
-          M=${T%%.*}
+          T="${IMAGE_TAG}"
           echo "GIT_TAG=$T" >> $GITHUB_ENV
-          echo "MAJOR_TAG=$M" >> $GITHUB_ENV
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -269,9 +293,10 @@ jobs:
           push: true
           provenance: false
           tags: |
-            ghcr.io/${{ github.repository }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
             ghcr.io/${{ github.repository }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
-            ghcr.io/${{ github.repository }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
+            ghcr.io/${{ github.repository }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
+            ${{ env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != '' && format('{0}/rustdesk-server:{1}-{2}', env.DOCKERHUB_NAMESPACE, env.GIT_TAG, matrix.job.name) || '' }}
+            ${{ env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != '' && format('{0}/rustdesk-server:latest-{1}', env.DOCKERHUB_NAMESPACE, matrix.job.name) || '' }}
           labels: ${{ steps.meta.outputs.labels }}
 
   # Set up minifest and tag for pushed image
@@ -281,6 +306,9 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -289,47 +317,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
       - name: Get git tag
         id: vars
         run: |
-          T=${GITHUB_REF#refs/*/}
-          M=${T%%.*}
+          T="${IMAGE_TAG}"
           echo "GIT_TAG=$T" >> $GITHUB_ENV
-          echo "MAJOR_TAG=$M" >> $GITHUB_ENV
 
-      # Create and push manifest for :ve.rs.ion tag
-      - name: Create and push manifest (:ve.rs.ion)
-        uses: Noelware/docker-manifest-action@master
-        if: github.event_name != 'workflow_dispatch'
-        with:
-          tags: ghcr.io/${{ github.repository }}:${{ env.GIT_TAG }}
-          inputs: |
-            ghcr.io/${{ github.repository }}:${{ env.GIT_TAG }}-amd64,
-            ghcr.io/${{ github.repository }}:${{ env.GIT_TAG }}-arm64v8,
-            ghcr.io/${{ github.repository }}:${{ env.GIT_TAG }}-armv7,
-            ghcr.io/${{ github.repository }}:${{ env.GIT_TAG }}-i386
-          push: true
+      - name: Create GHCR manifests
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          docker buildx imagetools create --tag "$IMAGE:$GIT_TAG" "$IMAGE:$GIT_TAG-amd64" "$IMAGE:$GIT_TAG-arm64v8" "$IMAGE:$GIT_TAG-armv7" "$IMAGE:$GIT_TAG-i386"
+          docker buildx imagetools create --tag "$IMAGE:$LATEST_TAG" "$IMAGE:$LATEST_TAG-amd64" "$IMAGE:$LATEST_TAG-arm64v8" "$IMAGE:$LATEST_TAG-armv7" "$IMAGE:$LATEST_TAG-i386"
 
-      # Create and push manifest for :major tag
-      - name: Create and push manifest (:major)
-        uses: Noelware/docker-manifest-action@master
-        with:
-          tags: ghcr.io/${{ github.repository }}:${{ env.MAJOR_TAG }}
-          inputs: |
-            ghcr.io/${{ github.repository }}:${{ env.MAJOR_TAG }}-amd64,
-            ghcr.io/${{ github.repository }}:${{ env.MAJOR_TAG }}-arm64v8,
-            ghcr.io/${{ github.repository }}:${{ env.MAJOR_TAG }}-armv7,
-            ghcr.io/${{ github.repository }}:${{ env.MAJOR_TAG }}-i386
-          push: true
-
-      # Create and push manifest for :latest tag
-      - name: Create and push manifest (:latest)
-        uses: Noelware/docker-manifest-action@master
-        with:
-          tags: ghcr.io/${{ github.repository }}:${{ env.LATEST_TAG }}
-          inputs: |
-            ghcr.io/${{ github.repository }}:${{ env.LATEST_TAG }}-amd64,
-            ghcr.io/${{ github.repository }}:${{ env.LATEST_TAG }}-arm64v8,
-            ghcr.io/${{ github.repository }}:${{ env.LATEST_TAG }}-armv7,
-            ghcr.io/${{ github.repository }}:${{ env.LATEST_TAG }}-i386
-          push: true
+      - name: Create Docker Hub manifests
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        env:
+          IMAGE: ${{ env.DOCKERHUB_NAMESPACE }}/rustdesk-server
+        run: |
+          docker buildx imagetools create --tag "$IMAGE:$GIT_TAG" "$IMAGE:$GIT_TAG-amd64" "$IMAGE:$GIT_TAG-arm64v8" "$IMAGE:$GIT_TAG-armv7" "$IMAGE:$GIT_TAG-i386"
+          docker buildx imagetools create --tag "$IMAGE:$LATEST_TAG" "$IMAGE:$LATEST_TAG-amd64" "$IMAGE:$LATEST_TAG-arm64v8" "$IMAGE:$LATEST_TAG-armv7" "$IMAGE:$LATEST_TAG-i386"

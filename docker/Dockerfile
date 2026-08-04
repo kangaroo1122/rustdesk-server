@@ -1,4 +1,5 @@
-FROM lejianwen/rustdesk-api:latest
+ARG API_IMAGE=ghcr.io/kangaroo1122/rustdesk-api:0.0.0-dev
+FROM ${API_IMAGE}
 
 ARG S6_OVERLAY_VERSION=3.2.0.0
 ARG S6_ARCH=x86_64
