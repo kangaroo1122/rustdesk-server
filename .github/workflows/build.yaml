@@ -2,6 +2,11 @@ name: Build server artifacts
 
 on:
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Release version used for a manual build'
+        required: true
+        default: '0.0.0-dev'
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
@@ -12,6 +17,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  IMAGE_TAG: ${{ github.event.inputs.image_tag || github.ref_name }}
 
 jobs:
 
@@ -31,6 +37,13 @@ jobs:
           #- { name: "amd64fb",    target: "x86_64-unknown-freebsd" }
 
     steps:
+      - name: Validate version
+        run: |
+          VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
+          if [[ ! "$IMAGE_TAG" =~ $VERSION_PATTERN ]]; then
+            echo "Invalid server version: $IMAGE_TAG"
+            exit 1
+          fi
       
       - name: Checkout
         uses: actions/checkout@v3
@@ -72,6 +85,14 @@ jobs:
     runs-on: windows-2022
 
     steps:
+      - name: Validate version
+        shell: bash
+        run: |
+          VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
+          if [[ ! "$IMAGE_TAG" =~ $VERSION_PATTERN ]]; then
+            echo "Invalid server version: $IMAGE_TAG"
+            exit 1
+          fi
       
       - name: Checkout
         uses: actions/checkout@v3
@@ -195,9 +216,10 @@ jobs:
           zip ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}${{ matrix.job.suffix }}.zip ${{ matrix.job.name }}/*
 
       - name: Create Release (${{ matrix.job.os }} - (${{ matrix.job.name }})
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ env.IMAGE_TAG }}
+          target_commitish: ${{ github.sha }}
           draft: true
           files: ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}${{ matrix.job.suffix }}.zip
 
@@ -253,9 +275,10 @@ jobs:
           debuild -i -us -uc -b -a${{ matrix.job.debian_platform }}
 
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ env.IMAGE_TAG }}
+          target_commitish: ${{ github.sha }}
           draft: true
           files: |
             debian-build/rustdesk-server-hbbr_*_${{ matrix.job.debian_platform }}.deb
