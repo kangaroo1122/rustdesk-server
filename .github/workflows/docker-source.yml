@@ -1,0 +1,422 @@
+name: Build integrated server Docker images
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Server image tag'
+        required: true
+        default: '0.0.0-dev'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: integrated-server-docker-${{ inputs.image_tag }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  IMAGE_TAG: ${{ inputs.image_tag }}
+  LATEST_TAG: latest
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  DOCKERHUB_TOKEN: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+  DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || secrets.DOCKER_USERNAME }}
+
+jobs:
+  validate:
+    name: Validate version
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate server version
+        run: |
+          VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
+          if [[ ! "$IMAGE_TAG" =~ $VERSION_PATTERN ]]; then
+            echo "Invalid server version: $IMAGE_TAG"
+            exit 1
+          fi
+
+  web:
+    name: Build Web source
+    needs: validate
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Web source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ format('{0}/rustdesk-api-web', github.repository_owner) }}
+          ref: master
+          token: ${{ secrets.SOURCE_REPOSITORIES_TOKEN || github.token }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Build Web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload Web assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: integrated-web-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  api:
+    name: Build API - ${{ matrix.job.name }}
+    needs:
+      - validate
+      - web
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { name: 'amd64',   artifact_arch: 'amd64' }
+          - { name: 'arm64v8', artifact_arch: 'arm64' }
+          - { name: 'armv7',   artifact_arch: 'armv7l' }
+    steps:
+      - name: Checkout API source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ format('{0}/rustdesk-api', github.repository_owner) }}
+          ref: master
+          path: rustdesk-api
+          token: ${{ secrets.SOURCE_REPOSITORIES_TOKEN || github.token }}
+
+      - name: Download Web assets
+        uses: actions/download-artifact@v4
+        with:
+          name: integrated-web-dist
+          path: rustdesk-api/resources/admin
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.10'
+          cache-dependency-path: rustdesk-api/go.sum
+
+      - name: Generate API documentation
+        working-directory: rustdesk-api
+        run: |
+          go mod tidy
+          go install github.com/swaggo/swag/cmd/swag@latest
+          swag init -g cmd/apimain.go --output docs/api --instanceName api --exclude http/controller/admin
+          swag init -g cmd/apimain.go --output docs/admin --instanceName admin --exclude http/controller/api
+
+      - name: Prepare API runtime
+        working-directory: rustdesk-api
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/api-rootfs/data" "$GITHUB_WORKSPACE/api-rootfs/runtime"
+          cp -a resources docs conf "$GITHUB_WORKSPACE/api-rootfs/"
+          echo "$IMAGE_TAG" > "$GITHUB_WORKSPACE/api-rootfs/resources/version"
+
+      - name: Build API
+        working-directory: rustdesk-api
+        run: |
+          case "${{ matrix.job.name }}" in
+            amd64)
+              sudo apt-get update
+              sudo apt-get install -y musl musl-dev musl-tools
+              CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC=musl-gcc CGO_LDFLAGS='-static' \
+                go build -ldflags '-s -w' -o "$GITHUB_WORKSPACE/api-rootfs/apimain" ./cmd/apimain.go
+              ;;
+            arm64v8)
+              wget https://musl.ljw.red/aarch64-linux-musl-cross.tgz
+              tar -xf aarch64-linux-musl-cross.tgz
+              export PATH="$PATH:$PWD/aarch64-linux-musl-cross/bin"
+              CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC=aarch64-linux-musl-gcc CGO_LDFLAGS='-static' \
+                go build -ldflags '-s -w' -o "$GITHUB_WORKSPACE/api-rootfs/apimain" ./cmd/apimain.go
+              ;;
+            armv7)
+              wget https://musl.ljw.red/armv7l-linux-musleabihf-cross.tgz
+              tar -xf armv7l-linux-musleabihf-cross.tgz
+              export PATH="$PATH:$PWD/armv7l-linux-musleabihf-cross/bin"
+              CGO_ENABLED=1 GOOS=linux GOARCH=arm GOARM=7 CC=armv7l-linux-musleabihf-gcc CGO_LDFLAGS='-static' \
+                go build -ldflags '-s -w' -o "$GITHUB_WORKSPACE/api-rootfs/apimain" ./cmd/apimain.go
+              ;;
+          esac
+
+      - name: Upload API runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: integrated-api-rootfs-${{ matrix.job.artifact_arch }}
+          path: api-rootfs/
+          if-no-files-found: error
+          retention-days: 1
+
+  server:
+    name: Build Server - ${{ matrix.job.name }}
+    needs: validate
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { name: 'amd64',   target: 'x86_64-unknown-linux-musl' }
+          - { name: 'arm64v8', target: 'aarch64-unknown-linux-musl' }
+          - { name: 'armv7',   target: 'armv7-unknown-linux-musleabihf' }
+          - { name: 'i386',    target: 'i686-unknown-linux-musl' }
+    steps:
+      - name: Checkout Server source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: '1.90.0'
+          targets: ${{ matrix.job.target }}
+          components: rustfmt
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: integrated-${{ matrix.job.name }}
+
+      - name: Build Server
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --all-features --target=${{ matrix.job.target }}
+          use-cross: true
+
+      - name: Make Server binaries executable
+        run: chmod -v a+x target/${{ matrix.job.target }}/release/*
+
+      - name: Upload Server binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: integrated-server-binaries-${{ matrix.job.name }}
+          path: |
+            target/${{ matrix.job.target }}/release/hbbr
+            target/${{ matrix.job.target }}/release/hbbs
+            target/${{ matrix.job.target }}/release/rustdesk-utils
+          if-no-files-found: error
+          retention-days: 1
+
+  s6:
+    name: Build S6 image - ${{ matrix.job.name }}
+    needs:
+      - api
+      - server
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { name: 'amd64',   api_arch: 'amd64',   docker_platform: 'linux/amd64',  s6_arch: 'x86_64' }
+          - { name: 'arm64v8', api_arch: 'arm64',   docker_platform: 'linux/arm64',  s6_arch: 'aarch64' }
+          - { name: 'armv7',   api_arch: 'armv7l',  docker_platform: 'linux/arm/v7', s6_arch: 'armhf' }
+    steps:
+      - name: Checkout Server source
+        uses: actions/checkout@v4
+
+      - name: Download API runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: integrated-api-rootfs-${{ matrix.job.api_arch }}
+          path: docker/api
+
+      - name: Download Server binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: integrated-server-binaries-${{ matrix.job.name }}
+          path: docker/rootfs/usr/bin
+
+      - name: Make Server binaries executable
+        run: chmod -v a+x docker/rootfs/usr/bin/*
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: Build and push S6 image
+        working-directory: docker
+        env:
+          GHCR_IMAGE: ghcr.io/${{ github.repository }}-s6
+          DOCKERHUB_IMAGE: ${{ env.DOCKERHUB_NAMESPACE }}/rustdesk-server-s6
+        run: |
+          TAGS=(
+            --tag "$GHCR_IMAGE:$IMAGE_TAG-${{ matrix.job.name }}"
+            --tag "$GHCR_IMAGE:$LATEST_TAG-${{ matrix.job.name }}"
+          )
+          if [[ -n "$DOCKERHUB_USERNAME" && -n "$DOCKERHUB_TOKEN" ]]; then
+            TAGS+=(
+              --tag "$DOCKERHUB_IMAGE:$IMAGE_TAG-${{ matrix.job.name }}"
+              --tag "$DOCKERHUB_IMAGE:$LATEST_TAG-${{ matrix.job.name }}"
+            )
+          fi
+          docker buildx build \
+            --file Dockerfile.source \
+            --platform "${{ matrix.job.docker_platform }}" \
+            --build-arg "S6_ARCH=${{ matrix.job.s6_arch }}" \
+            --provenance=false \
+            --push \
+            "${TAGS[@]}" \
+            .
+
+  s6-manifest:
+    name: Create S6 manifests
+    needs: s6
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: Create GitHub Container Registry manifests
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}-s6
+        run: |
+          docker buildx imagetools create --tag "$IMAGE:$IMAGE_TAG" "$IMAGE:$IMAGE_TAG-amd64" "$IMAGE:$IMAGE_TAG-arm64v8" "$IMAGE:$IMAGE_TAG-armv7"
+          docker buildx imagetools create --tag "$IMAGE:$LATEST_TAG" "$IMAGE:$LATEST_TAG-amd64" "$IMAGE:$LATEST_TAG-arm64v8" "$IMAGE:$LATEST_TAG-armv7"
+
+      - name: Create Docker Hub manifests
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        env:
+          IMAGE: ${{ env.DOCKERHUB_NAMESPACE }}/rustdesk-server-s6
+        run: |
+          docker buildx imagetools create --tag "$IMAGE:$IMAGE_TAG" "$IMAGE:$IMAGE_TAG-amd64" "$IMAGE:$IMAGE_TAG-arm64v8" "$IMAGE:$IMAGE_TAG-armv7"
+          docker buildx imagetools create --tag "$IMAGE:$LATEST_TAG" "$IMAGE:$LATEST_TAG-amd64" "$IMAGE:$LATEST_TAG-arm64v8" "$IMAGE:$LATEST_TAG-armv7"
+
+  classic:
+    name: Build classic image - ${{ matrix.job.name }}
+    needs: server
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { name: 'amd64',   docker_platform: 'linux/amd64' }
+          - { name: 'arm64v8', docker_platform: 'linux/arm64' }
+          - { name: 'armv7',   docker_platform: 'linux/arm/v7' }
+          - { name: 'i386',    docker_platform: 'linux/386' }
+    steps:
+      - name: Checkout Server source
+        uses: actions/checkout@v4
+
+      - name: Download Server binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: integrated-server-binaries-${{ matrix.job.name }}
+          path: docker-classic
+
+      - name: Make Server binaries executable
+        run: chmod -v a+x docker-classic/*
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: Build and push classic image
+        working-directory: docker-classic
+        env:
+          GHCR_IMAGE: ghcr.io/${{ github.repository }}
+          DOCKERHUB_IMAGE: ${{ env.DOCKERHUB_NAMESPACE }}/rustdesk-server
+        run: |
+          TAGS=(
+            --tag "$GHCR_IMAGE:$IMAGE_TAG-${{ matrix.job.name }}"
+            --tag "$GHCR_IMAGE:$LATEST_TAG-${{ matrix.job.name }}"
+          )
+          if [[ -n "$DOCKERHUB_USERNAME" && -n "$DOCKERHUB_TOKEN" ]]; then
+            TAGS+=(
+              --tag "$DOCKERHUB_IMAGE:$IMAGE_TAG-${{ matrix.job.name }}"
+              --tag "$DOCKERHUB_IMAGE:$LATEST_TAG-${{ matrix.job.name }}"
+            )
+          fi
+          docker buildx build \
+            --platform "${{ matrix.job.docker_platform }}" \
+            --provenance=false \
+            --push \
+            "${TAGS[@]}" \
+            .
+
+  classic-manifest:
+    name: Create classic manifests
+    needs: classic
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: Create GitHub Container Registry manifests
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          docker buildx imagetools create --tag "$IMAGE:$IMAGE_TAG" "$IMAGE:$IMAGE_TAG-amd64" "$IMAGE:$IMAGE_TAG-arm64v8" "$IMAGE:$IMAGE_TAG-armv7" "$IMAGE:$IMAGE_TAG-i386"
+          docker buildx imagetools create --tag "$IMAGE:$LATEST_TAG" "$IMAGE:$LATEST_TAG-amd64" "$IMAGE:$LATEST_TAG-arm64v8" "$IMAGE:$LATEST_TAG-armv7" "$IMAGE:$LATEST_TAG-i386"
+
+      - name: Create Docker Hub manifests
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        env:
+          IMAGE: ${{ env.DOCKERHUB_NAMESPACE }}/rustdesk-server
+        run: |
+          docker buildx imagetools create --tag "$IMAGE:$IMAGE_TAG" "$IMAGE:$IMAGE_TAG-amd64" "$IMAGE:$IMAGE_TAG-arm64v8" "$IMAGE:$IMAGE_TAG-armv7" "$IMAGE:$IMAGE_TAG-i386"
+          docker buildx imagetools create --tag "$IMAGE:$LATEST_TAG" "$IMAGE:$LATEST_TAG-amd64" "$IMAGE:$LATEST_TAG-arm64v8" "$IMAGE:$LATEST_TAG-armv7" "$IMAGE:$LATEST_TAG-i386"
