@@ -1,16 +1,16 @@
 # 关于此分支
 
-[![build](https://github.com/lejianwen/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/lejianwen/rustdesk-server/actions/workflows/build.yaml)
+[![build](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml)
 
 - 解决当客户端登录了`Api`账号时链接超时的问题
-- s6镜像添加了`Api`支持，`Api`开源地址 https://github.com/lejianwen/rustdesk-api
+- s6镜像添加了`Api`支持，`Api`开源地址 https://github.com/kangaroo1122/rustdesk-api
 - 是否必须登录才能链接， `MUST_LOGIN` 默认为 `N`，设置为 `Y` 则必须登录才能链接
 - `RUSTDESK_API_JWT_KEY`，设置后会通过`JWT`校验token的合法性
 - Support client websocket (client >= 1.4.1)
 
 ## docker镜像地址
 
-- s6 镜像 [lejianwen/rustdesk-server-s6](https://hub.docker.com/r/lejianwen/rustdesk-server-s6)
+- s6 镜像 [ghcr.io/kangaroo1122/rustdesk-server-s6](https://github.com/kangaroo1122/rustdesk-server/pkgs/container/rustdesk-server-s6)
 
 ```yaml
  networks:
@@ -26,17 +26,17 @@
        - 21117:21117
        - 21118:21118
        - 21119:21119
-     image: lejianwen/rustdesk-server-s6:latest
+     image: ghcr.io/kangaroo1122/rustdesk-server-s6:latest
      environment:
        - RELAY=<relay_server[:port]>
        - ENCRYPTED_ONLY=1
-       - MUST_LOGIN=N
+       - MUST_LOGIN=Y
        - TZ=Asia/Shanghai
        - RUSTDESK_API_RUSTDESK_ID_SERVER=<id_server[:21116]>
        - RUSTDESK_API_RUSTDESK_RELAY_SERVER=<relay_server[:21117]>
        - RUSTDESK_API_RUSTDESK_API_SERVER=http://<api_server[:21114]>
-       - RUSTDESK_API_KEY_FILE=/data/id_ed25519.pub
-       - RUSTDESK_API_JWT_KEY=xxxxxx # jwt key
+       - RUSTDESK_API_RUSTDESK_KEY_FILE=/data/id_ed25519.pub
+       - RUSTDESK_API_JWT_KEY=<shared-jwt-key> # API 與 Server 必須一致
      volumes:
        - /data/rustdesk/server:/data
        - /data/rustdesk/api:/app/data #将数据库挂载
@@ -46,7 +46,7 @@
 
 ```
 
-- 普通镜像 [lejianwen/rustdesk-server](https://hub.docker.com/r/lejianwen/rustdesk-server)
+- 普通镜像 [ghcr.io/kangaroo1122/rustdesk-server](https://github.com/kangaroo1122/rustdesk-server/pkgs/container/rustdesk-server)
 
 # API功能截图
 
@@ -54,7 +54,10 @@
 
 ![commnd.png](./readme/command_simple.png)
 
-更多查看 [RustDesk Api](https://github.com/lejianwen/rustdesk-api)
+更多查看 [RustDesk Api](https://github.com/kangaroo1122/rustdesk-api)
+
+> **Fork 說明：**目前 fork 的 Release、映像名稱與部署範例以 [README.md](README.md) 和
+> [README-EN.md](README-EN.md) 為準；下方保留的上游翻譯可能更新較慢。
 
 
 
@@ -65,7 +68,7 @@
   <a href="#如何建立金鑰對">金鑰對</a> •
   <a href="#deb-套件">Debian</a> •
   <a href="#ENV-環境參數">環境參數</a><br>
-  [<a href="README.md">English</a>] | [<a href="README-DE.md">Deutsch</a>] | [<a href="README-NL.md">Nederlands</a>] | [<a href="README-ZH.md">简体中文</a>]<br>
+  [<a href="README-EN.md">English</a>] | [<a href="README-DE.md">Deutsch</a>] | [<a href="README-NL.md">Nederlands</a>] | [<a href="README.md">简体中文</a>]<br>
 </p>
 
 # RustDesk Server Program
@@ -114,8 +117,8 @@ Docker 映像檔會在每次 GitHub 發布時自動生成並發布。我們有�
 您可以使用以下指令，直接透過 ``docker run`` 來啟動這些映像檔：
 
 ```bash
-docker run --name hbbs --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
-docker run --name hbbr --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr 
+docker run --name hbbs --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]>
+docker run --name hbbr --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr
 ```
 
 或刪去 `--net=host`， 但 P2P 直接連線會無法運作。
@@ -123,8 +126,8 @@ docker run --name hbbr --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-serv
 對於使用 SELinux 的系統，需要將 ``/root`` 替換為 ``/root:z``，以便容器正確運行。或者，也可以通過添加選項 ``--security-opt label=disable`` 完全禁用 SELinux 容器隔離。
 
 ```bash
-docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -p 21118:21118 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
-docker run --name hbbr -p 21117:21117 -p 21119:21119 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr 
+docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -p 21118:21118 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]>
+docker run --name hbbr -p 21117:21117 -p 21119:21119 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr
 ```
 
 `relay-server-ip` 參數是執行這些容器的伺服器的 IP 地址（或 DNS 名稱）。如果您為 `hbbr` 使用的端口不是 **21117**，則必須使用 **可選** 的 `port` 參數。
@@ -204,7 +207,7 @@ S6-overlay 在此充當監督程序，保持兩個進程運行，因此使用此
 您可以直接使用以下命令使用 `docker run` 來啟動這個映象檔：
 
 ```bash
-docker run --name rustdesk-server \ 
+docker run --name rustdesk-server \
   --net=host \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \
@@ -268,7 +271,7 @@ services:
 您可以使用 Docker 環境變數來儲存金鑰。只需按照以下範例操作：
 
 ```bash
-docker run --name rustdesk-server \ 
+docker run --name rustdesk-server \
   --net=host \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \
@@ -351,7 +354,7 @@ secrets:
   key_pub:
     file: secrets/id_ed25519.pub
   key_priv:
-    file: secrets/id_ed25519      
+    file: secrets/id_ed25519
 ```
 
 ## 如何建立金鑰對

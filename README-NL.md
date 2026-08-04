@@ -1,17 +1,17 @@
 
 # About this repository
 
-[![build](https://github.com/lejianwen/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/lejianwen/rustdesk-server/actions/workflows/build.yaml)
+[![build](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml)
 
 - Solves the issue of connection timeout when the client logs in with an `API` account
-- Added `API` support to the s6 image, `API` open-source repository: https://github.com/lejianwen/rustdesk-api
+- Added `API` support to the s6 image, `API` open-source repository: https://github.com/kangaroo1122/rustdesk-api
 - Whether login is required to connect, `MUST_LOGIN` defaults to `N`, set to `Y` to require login for connection
 - `RUSTDESK_API_JWT_KEY`, when set, validates the token's legitimacy through `JWT`
 - Support client websocket (client >= 1.4.1)
 
 ## docker
 
-- s6 Image [lejianwen/rustdesk-server-s6](https://hub.docker.com/r/lejianwen/rustdesk-server-s6)
+- s6 Image [ghcr.io/kangaroo1122/rustdesk-server-s6](https://github.com/kangaroo1122/rustdesk-server/pkgs/container/rustdesk-server-s6)
 
 ```yaml
  networks:
@@ -27,27 +27,27 @@
        - 21117:21117
        - 21118:21118
        - 21119:21119
-     image: lejianwen/rustdesk-server-s6:latest
+     image: ghcr.io/kangaroo1122/rustdesk-server-s6:latest
      environment:
        - RELAY=<relay_server[:port]>
        - ENCRYPTED_ONLY=1
-       - MUST_LOGIN=N
+       - MUST_LOGIN=Y
        - TZ=Asia/Shanghai
        - RUSTDESK_API_RUSTDESK_ID_SERVER=<id_server[:21116]>
        - RUSTDESK_API_RUSTDESK_RELAY_SERVER=<relay_server[:21117]>
        - RUSTDESK_API_RUSTDESK_API_SERVER=http://<api_server[:21114]>
-       - RUSTDESK_API_KEY_FILE=/data/id_ed25519.pub
-       - RUSTDESK_API_JWT_KEY=xxxxxx # jwt key
+       - RUSTDESK_API_RUSTDESK_KEY_FILE=/data/id_ed25519.pub
+       - RUSTDESK_API_JWT_KEY=<shared-jwt-key> # must match API and Server
      volumes:
        - /data/rustdesk/server:/data
        - /data/rustdesk/api:/app/data #
      networks:
        - rustdesk-net
      restart: unless-stopped
-       
+
 ```
 
-- Common Image [lejianwen/rustdesk-server](https://hub.docker.com/r/lejianwen/rustdesk-server)
+- Common Image [ghcr.io/kangaroo1122/rustdesk-server](https://github.com/kangaroo1122/rustdesk-server/pkgs/container/rustdesk-server)
 
 
 # API Screenshot
@@ -56,7 +56,10 @@
 
 ![commnd.png](./readme/command_simple.png)
 
-More See [RustDesk Api](https://github.com/lejianwen/rustdesk-api)
+More See [RustDesk Api](https://github.com/kangaroo1122/rustdesk-api)
+
+> **Fork note:** Current fork releases, image names, and deployment examples are maintained in
+> [README.md](README.md) and [README-EN.md](README-EN.md). The translated upstream reference below may lag behind.
 
 
 
@@ -68,7 +71,7 @@ More See [RustDesk Api](https://github.com/lejianwen/rustdesk-api)
   <a href="#hoe-maak-je-een-key-paar">Key paar</a> •
   <a href="#deb-pakketten">Debian pakketten</a> •
   <a href="#env-variabelen">ENV variabelen</a><br>
-  [<a href="README.md">English</a>] | [<a href="README-DE.md">Deutsch</a>] | [<a href="README-TW.md">繁體中文</a>] | [<a href="README-ZH.md">简体中文</a>]<br>
+  [<a href="README-EN.md">English</a>] | [<a href="README-DE.md">Deutsch</a>] | [<a href="README-TW.md">繁體中文</a>] | [<a href="README.md">简体中文</a>]<br>
 </p>
 
 # RustDesk Server Programa
@@ -115,8 +118,8 @@ Deze bestanden (images) zijn gebouwd voor `ubuntu-20.04` met als enige toevoegin
 U kunt deze bestanden (images) direct starten via `docker run` met deze commando's:
 
 ```bash
-docker run --name hbbs --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
-docker run --name hbbr --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr 
+docker run --name hbbs --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]>
+docker run --name hbbr --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr
 ```
 
 of zonder `--net=host`, maar een directe P2P verbinding zal niet werken.
@@ -124,8 +127,8 @@ of zonder `--net=host`, maar een directe P2P verbinding zal niet werken.
 Voor systemen die SELinux gebruiken is het vervangen van `/root` door `/root:z` nodig om de containers correct te laten draaien. Als alternatief kan SELinux containerscheiding volledig worden uitgeschakeld door de optie `--security-opt label=disable` toe te voegen.
 
 ```bash
-docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -p 21118:21118 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
-docker run --name hbbr -p 21117:21117 -p 21119:21119 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr 
+docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -p 21118:21118 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]>
+docker run --name hbbr -p 21117:21117 -p 21119:21119 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr
 ```
 
 De `relay-server-ip` parameter is het IP adres (of dns naam) van de server waarop deze containers draaien. De **optionele** `port` parameter moet gebruikt worden als je een andere poort dan **21117** gebruikt voor `hbbr`.
@@ -204,7 +207,7 @@ De S6-overlay fungeert als supervisor en houdt beide processen draaiende, dus me
 U kunt deze bestanden (images) direct starten via `docker run` met dit commando:
 
 ```bash
-docker run --name rustdesk-server \ 
+docker run --name rustdesk-server \
   --net=host \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \
@@ -268,7 +271,7 @@ Als je geen keys opgeeft, zal `hbbs` er een voor je genereren en op de standaard
 U kunt docker omgevingsvariabelen gebruiken om de keys op te slaan. Volg gewoon deze voorbeelden:
 
 ```bash
-docker run --name rustdesk-server \ 
+docker run --name rustdesk-server \
   --net=host \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \
@@ -351,7 +354,7 @@ secrets:
   key_pub:
     file: secrets/id_ed25519.pub
   key_priv:
-    file: secrets/id_ed25519      
+    file: secrets/id_ed25519
 ```
 
 ## Hoe maak je een key paar

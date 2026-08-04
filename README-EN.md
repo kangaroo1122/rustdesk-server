@@ -1,17 +1,25 @@
 
-# About this repository
+# RustDesk Server (kangaroo1122 fork)
 
-[![build](https://github.com/lejianwen/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/lejianwen/rustdesk-server/actions/workflows/build.yaml)
+[![build](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml/badge.svg?branch=forapi)](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml)
+[![test](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/test.yml/badge.svg?branch=forapi)](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/test.yml)
 
-- Solves the issue of connection timeout when the client logs in with an `API` account
-- Added `API` support to the s6 image, `API` open-source repository: https://github.com/lejianwen/rustdesk-api
-- Whether login is required to connect, `MUST_LOGIN` defaults to `N`, set to `Y` to require login for connection
-- `RUSTDESK_API_JWT_KEY`, when set, validates the token's legitimacy through `JWT`
-- Support client websocket (client >= 1.4.1)
+This repository is the enhanced server fork used by the kangaroo1122 deployment. The production
+branch is `forapi`; it tracks stable upstream releases while preserving the API login integration,
+`MUST_LOGIN`/JWT validation, encrypted TCP, client WebSocket support, and Web Client online queries.
 
-## docker 
+Related repositories:
 
-- s6 Image [lejianwen/rustdesk-server-s6](https://hub.docker.com/r/lejianwen/rustdesk-server-s6)
+- API: [kangaroo1122/rustdesk-api](https://github.com/kangaroo1122/rustdesk-api), production branch `master`
+- Web Admin: [kangaroo1122/rustdesk-api-web](https://github.com/kangaroo1122/rustdesk-api-web), production branch `master`
+- Official upstream: [rustdesk/rustdesk-server](https://github.com/rustdesk/rustdesk-server)
+
+## Published images
+
+- S6 all-in-one: `ghcr.io/kangaroo1122/rustdesk-server-s6:<server-version>-api-<api-version>`
+- Classic: `ghcr.io/kangaroo1122/rustdesk-server:<server-version>`
+- Both also publish `latest`; pin exact versions for production.
+- Docker Hub publishing is optional, while GHCR is always the primary target.
 
 ```yaml
  networks:
@@ -27,27 +35,27 @@
        - 21117:21117
        - 21118:21118
        - 21119:21119
-     image: lejianwen/rustdesk-server-s6:latest
+     image: ghcr.io/kangaroo1122/rustdesk-server-s6:latest
      environment:
        - RELAY=<relay_server[:port]>
        - ENCRYPTED_ONLY=1
-       - MUST_LOGIN=N
+       - MUST_LOGIN=Y
        - TZ=Asia/Shanghai
        - RUSTDESK_API_RUSTDESK_ID_SERVER=<id_server[:21116]>
        - RUSTDESK_API_RUSTDESK_RELAY_SERVER=<relay_server[:21117]>
        - RUSTDESK_API_RUSTDESK_API_SERVER=http://<api_server[:21114]>
-       - RUSTDESK_API_KEY_FILE=/data/id_ed25519.pub
-       - RUSTDESK_API_JWT_KEY=xxxxxx # jwt key
+       - RUSTDESK_API_RUSTDESK_KEY_FILE=/data/id_ed25519.pub
+       - RUSTDESK_API_JWT_KEY=<shared-jwt-key> # must match API and Server
      volumes:
        - /data/rustdesk/server:/data
        - /data/rustdesk/api:/app/data #
      networks:
        - rustdesk-net
      restart: unless-stopped
-       
+
 ```
 
-- Common Image [lejianwen/rustdesk-server](https://hub.docker.com/r/lejianwen/rustdesk-server)
+- Releases: [kangaroo1122/rustdesk-server/releases](https://github.com/kangaroo1122/rustdesk-server/releases)
 
 
 # API Screenshot
@@ -56,7 +64,7 @@
 
 ![commnd.png](./readme/command_simple.png)
 
-More See [RustDesk Api](https://github.com/lejianwen/rustdesk-api)
+See [RustDesk API](https://github.com/kangaroo1122/rustdesk-api) for API and Web Admin details.
 
 
 
@@ -69,14 +77,14 @@ More See [RustDesk Api](https://github.com/lejianwen/rustdesk-api)
   <a href="#how-to-create-a-keypair">Keypair</a> •
   <a href="#deb-packages">Debian</a> •
   <a href="#env-variables">Variables</a><br>
-  [<a href="README-DE.md">Deutsch</a>] | [<a href="README-NL.md">Nederlands</a>] | [<a href="README-TW.md">繁體中文</a>] | [<a href="README-ZH.md">简体中文</a>]<br>
+  [<a href="README-DE.md">Deutsch</a>] | [<a href="README-NL.md">Nederlands</a>] | [<a href="README-TW.md">繁體中文</a>] | [<a href="README.md">简体中文</a>]<br>
 </p>
 
 # RustDesk Server Program
 
-[![build](https://github.com/rustdesk/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/rustdesk/rustdesk-server/actions/workflows/build.yaml)
+[![build](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml)
 
-[**Download**](https://github.com/rustdesk/rustdesk-server/releases)
+[**Download**](https://github.com/kangaroo1122/rustdesk-server/releases)
 
 [**Manual**](https://rustdesk.com/docs/en/self-host/)
 
@@ -96,37 +104,40 @@ Three executables will be generated in target/release.
 - hbbr - RustDesk relay server
 - rustdesk-utils - RustDesk CLI utilities
 
-You can find updated binaries on the [Releases](https://github.com/rustdesk/rustdesk-server/releases) page.
+You can find binaries built by this fork on its [Releases](https://github.com/kangaroo1122/rustdesk-server/releases) page.
 
 If you want extra features, [RustDesk Server Pro](https://rustdesk.com/pricing.html) might suit you better.
 
-If you want to develop your own server, [rustdesk-server-demo](https://github.com/rustdesk/rustdesk-server-demo) might be a better and simpler start for you than this repo.
+If you want to develop your own server, the upstream [rustdesk-server-demo](https://github.com/rustdesk/rustdesk-server-demo) is a simpler starting point.
 
 ## Docker images
 
-Docker images are automatically generated and published to [Docker Hub](https://hub.docker.com/r/rustdesk) and [GitHub Container Registry](https://github.com/rustdesk?tab=packages&repo_name=rustdesk-server) on every GitHub release. We have 2 kind of images.
+Images are published to this fork's GitHub Container Registry. Docker Hub is an optional mirror
+when repository credentials are configured. Two image variants are available.
 
 ### Classic image
 
-These images are built from scratch with two main binaries (`hbbs` and `hbbr`). They're available on [Docker Hub](https://hub.docker.com/r/rustdesk/rustdesk-server/) and [GitHub Container Registry](https://github.com/rustdesk/rustdesk-server/pkgs/container/rustdesk-server) with these architectures:
+The Classic image is built from scratch with `hbbs` and `hbbr`. It is available from
+[GHCR](https://github.com/kangaroo1122/rustdesk-server/pkgs/container/rustdesk-server) for these architectures:
 
 * amd64
 * arm64v8
 * armv7
+* i386
 
-You could use `latest` tag or major version tag `1` with supported architectures:
+Use an exact server version in production or `latest` for manual validation:
 
-| Version       | image:tag                         |
-| ------------- | --------------------------------- |
-| latest        | `rustdesk/rustdesk-server:latest` |
-| Major version | `rustdesk/rustdesk-server:1`      |
+| Version | image:tag |
+| --- | --- |
+| latest | `ghcr.io/kangaroo1122/rustdesk-server:latest` |
+| Exact | `ghcr.io/kangaroo1122/rustdesk-server:<server-version>` |
 
 
 You can start these images directly with `docker run` with these commands:
 
 ```bash
-docker run --name hbbs --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
-docker run --name hbbr --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr 
+docker run --name hbbs --net=host -v "$PWD/data:/root" -d ghcr.io/kangaroo1122/rustdesk-server:latest hbbs -r <relay-server-ip[:port]>
+docker run --name hbbr --net=host -v "$PWD/data:/root" -d ghcr.io/kangaroo1122/rustdesk-server:latest hbbr
 ```
 
 or without `--net=host`, but P2P direct connection can not work.
@@ -134,8 +145,8 @@ or without `--net=host`, but P2P direct connection can not work.
 For systems using SELinux, replacing `/root` by `/root:z` is required for the containers to run correctly. Alternatively, SELinux container separation can be disabled completely adding the option `--security-opt label=disable`.
 
 ```bash
-docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -p 21118:21118 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbs -r <relay-server-ip[:port]> 
-docker run --name hbbr -p 21117:21117 -p 21119:21119 -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr 
+docker run --name hbbs -p 21115:21115 -p 21116:21116 -p 21116:21116/udp -p 21118:21118 -v "$PWD/data:/root" -d ghcr.io/kangaroo1122/rustdesk-server:latest hbbs -r <relay-server-ip[:port]>
+docker run --name hbbr -p 21117:21117 -p 21119:21119 -v "$PWD/data:/root" -d ghcr.io/kangaroo1122/rustdesk-server:latest hbbr
 ```
 
 The `relay-server-ip` parameter is the IP address (or dns name) of the server running these containers. The **optional** `port` parameter has to be used if you use a port different than **21117** for `hbbr`.
@@ -157,7 +168,7 @@ services:
       - 21116:21116
       - 21116:21116/udp
       - 21118:21118
-    image: rustdesk/rustdesk-server:latest
+    image: ghcr.io/kangaroo1122/rustdesk-server:latest
     command: hbbs -r rustdesk.example.com:21117
     volumes:
       - ./data:/root
@@ -172,7 +183,7 @@ services:
     ports:
       - 21117:21117
       - 21119:21119
-    image: rustdesk/rustdesk-server:latest
+    image: ghcr.io/kangaroo1122/rustdesk-server:latest
     command: hbbr
     volumes:
       - ./data:/root
@@ -185,38 +196,38 @@ Edit line 16 to point to your relay server (the one listening on port 21117). Yo
 
 (docker-compose credit goes to @lukebarone and @QuiGonLeong)
 
-> [!NOTE]  
-> The rustdesk/rustdesk-server:latest in China may be replaced with the latest version number on Docker Hub, such as `rustdesk-server:1.1.10-3`. Otherwise, the old version may be pulled due to image acceleration.
-
-> [!NOTE]  
-> If you are experiencing issues pulling from Docker Hub, try pulling from the [GitHub Container Registry](https://github.com/rustdesk/rustdesk-server/pkgs/container/rustdesk-server) instead.
-
 ## S6-overlay based images
 
-These images are build against `busybox:stable` with the addition of the binaries (both `hbbs` and `hbbr`) and [S6-overlay](https://github.com/just-containers/s6-overlay). They're available on [Docker hub](https://hub.docker.com/r/rustdesk/rustdesk-server-s6/) and [GitHub Container Registry](https://github.com/rustdesk/rustdesk-server/pkgs/container/rustdesk-server) with these architectures:
+The S6 image starts from an exact version of this fork's API image and adds `hbbs`, `hbbr`,
+`rustdesk-utils`, and [S6-overlay](https://github.com/just-containers/s6-overlay). It is published to
+[GHCR](https://github.com/kangaroo1122/rustdesk-server/pkgs/container/rustdesk-server-s6).
 
 * amd64
-* i386
 * arm64v8
 * armv7
 
-You could use `latest` tag or major version tag `1` with supported architectures:
+Use the combined Server/API version tag in production:
 
-| Version       | image:tag                            |
-| ------------- | ------------------------------------ |
-| latest        | `rustdesk/rustdesk-server-s6:latest` |
-| Major version | `rustdesk/rustdesk-server-s6:1`      |
+| Version | image:tag |
+| --- | --- |
+| latest | `ghcr.io/kangaroo1122/rustdesk-server-s6:latest` |
+| Exact | `ghcr.io/kangaroo1122/rustdesk-server-s6:<server-version>-api-<api-version>` |
 
-The S6-overlay acts as a supervisor and keeps both process running, so with this image, there's no need to have two separate running containers.
+S6 supervises key initialization, `hbbr`, `hbbs`, and API, so separate API and server containers are not required.
+
+Persist `/data` for the hbbs database and server key pair, and `/app/data` for the API database.
+Back up both directories before upgrades; they are separate data stores and must not be merged.
 
 You can start these images directly with `docker run` with this command:
 
 ```bash
-docker run --name rustdesk-server \ 
+docker run --name rustdesk-server \
   --net=host \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \
-  -v "$PWD/data:/data" -d rustdesk/rustdesk-server-s6:latest
+  -v "$PWD/data:/data" \
+  -v "$PWD/api-data:/app/data" \
+  -d ghcr.io/kangaroo1122/rustdesk-server-s6:latest
 ```
 
 or without `--net=host`, but P2P direct connection cannot work.
@@ -227,7 +238,9 @@ docker run --name rustdesk-server \
   -p 21117:21117 -p 21118:21118 -p 21119:21119 \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \
-  -v "$PWD/data:/data" -d rustdesk/rustdesk-server-s6:latest
+  -v "$PWD/data:/data" \
+  -v "$PWD/api-data:/app/data" \
+  -d ghcr.io/kangaroo1122/rustdesk-server-s6:latest
 ```
 
 Or you can use a docker-compose file:
@@ -245,12 +258,13 @@ services:
       - 21117:21117
       - 21118:21118
       - 21119:21119
-    image: rustdesk/rustdesk-server-s6:latest
+    image: ghcr.io/kangaroo1122/rustdesk-server-s6:latest
     environment:
       - "RELAY=rustdesk.example.com:21117"
       - "ENCRYPTED_ONLY=1"
     volumes:
       - ./data:/data
+      - ./api-data:/app/data
     restart: unless-stopped
 ```
 
@@ -276,14 +290,14 @@ If you provide no keys, `hbbs` will generate one for you, and it'll place it in 
 You can use docker environment variables to store the keys. Just follow this examples:
 
 ```bash
-docker run --name rustdesk-server \ 
+docker run --name rustdesk-server \
   --net=host \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \
   -e "DB_URL=/db/db_v2.sqlite3" \
   -e "KEY_PRIV=FR2j78IxfwJNR+HjLluQ2Nh7eEryEeIZCwiQDPVe+PaITKyShphHAsPLn7So0OqRs92nGvSRdFJnE2MSyrKTIQ==" \
   -e "KEY_PUB=iEyskoaYRwLDy5+0qNDqkbPdpxr0kXRSZxNjEsqykyE=" \
-  -v "$PWD/db:/db" -d rustdesk/rustdesk-server-s6:latest
+  -v "$PWD/db:/db" -d ghcr.io/kangaroo1122/rustdesk-server-s6:latest
 ```
 
 ```yaml
@@ -299,7 +313,7 @@ services:
       - 21117:21117
       - 21118:21118
       - 21119:21119
-    image: rustdesk/rustdesk-server-s6:latest
+    image: ghcr.io/kangaroo1122/rustdesk-server-s6:latest
     environment:
       - "RELAY=rustdesk.example.com:21117"
       - "ENCRYPTED_ONLY=1"
@@ -327,7 +341,7 @@ docker service create --name rustdesk-server \
   -e "ENCRYPTED_ONLY=1" \
   -e "DB_URL=/db/db_v2.sqlite3" \
   --mount "type=bind,source=$PWD/db,destination=/db" \
-  rustdesk/rustdesk-server-s6:latest
+  ghcr.io/kangaroo1122/rustdesk-server-s6:latest
 ```
 
 ```yaml
@@ -343,7 +357,7 @@ services:
       - 21117:21117
       - 21118:21118
       - 21119:21119
-    image: rustdesk/rustdesk-server-s6:latest
+    image: ghcr.io/kangaroo1122/rustdesk-server-s6:latest
     environment:
       - "RELAY=rustdesk.example.com:21117"
       - "ENCRYPTED_ONLY=1"
@@ -359,7 +373,7 @@ secrets:
   key_pub:
     file: secrets/id_ed25519.pub
   key_priv:
-    file: secrets/id_ed25519      
+    file: secrets/id_ed25519
 ```
 
 ## How to create a keypair
@@ -375,7 +389,7 @@ You can use this command to generate a keypair:
 If you don't have (or don't want) the `rustdesk-utils` package installed on your system, you can invoke the same command with docker:
 
 ```bash
-docker run --rm --entrypoint /usr/bin/rustdesk-utils  rustdesk/rustdesk-server-s6:latest genkeypair
+docker run --rm --entrypoint /usr/bin/rustdesk-utils  ghcr.io/kangaroo1122/rustdesk-server-s6:latest genkeypair
 ```
 
 The output will be something like this:
@@ -387,7 +401,7 @@ Secret Key:  egAVd44u33ZEUIDTtksGcHeVeAwywarEdHmf99KM5ajwEsuG3NQFT9coAfiZ6nen4hf
 
 ## .deb packages
 
-Separate .deb packages are available for each binary, you can find them in the [Releases](https://github.com/rustdesk/rustdesk-server/releases).
+Separate .deb packages are available for each binary, you can find them in the [Releases](https://github.com/kangaroo1122/rustdesk-server/releases).
 These packages are meant for the following distributions:
 
 - Ubuntu 24.04 LTS
