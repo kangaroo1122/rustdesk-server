@@ -13,7 +13,6 @@ pub struct Claims {
 }
 
 pub fn generate_token(user_id: u32, exp: i64) -> Result<String, String> {
-    println!("secret: {:}", SECRET.to_string());
     let claims = Claims {
         user_id,
         exp: (chrono::Utc::now() + chrono::Duration::seconds(exp)).timestamp() as usize,
@@ -36,7 +35,7 @@ pub fn verify_token(token: &str) -> Result<Claims, String> {
     let validation = Validation::new(Algorithm::HS256);
 
     let decoded = decode::<Claims>(
-        &token,
+        token,
         &DecodingKey::from_secret(SECRET.as_ref()),
         &validation,
     );

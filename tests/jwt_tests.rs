@@ -14,7 +14,11 @@ async fn test_verify_token() {
     std::env::set_var("RUSTDESK_API_JWT_KEY", "testjwt");
     let token = jwt::generate_token(1, 2).unwrap();
     // let token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJleHAiOjE3MzY4NzA4NjF9.u5pxmwNMrYUwtkspF1FuZj-R5ANAR9WT9_dMHuQhV0Y";
-    println!("Token : {:?}, now: {:?}", token, chrono::Utc::now().timestamp());
+    println!(
+        "Token : {:?}, now: {:?}",
+        token,
+        chrono::Utc::now().timestamp()
+    );
 
     // hbb_common::sleep(3f32).await;
     // println!("Token : {:?}, now: {:?}", token, chrono::Utc::now().timestamp());
