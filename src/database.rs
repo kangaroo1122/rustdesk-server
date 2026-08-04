@@ -125,23 +125,23 @@ impl Database {
         Ok(guid)
     }
 
-    pub async fn update_pk(
-        &self,
-        guid: &Vec<u8>,
-        id: &str,
-        pk: &[u8],
-        info: &str,
-    ) -> ResultType<()> {
-        sqlx::query!(
-            "update peer set id=?, pk=?, info=? where guid=?",
-            id,
-            pk,
-            info,
-            guid
+    pub async fn update_pk(&self, guid: &Vec<u8>, pk: &[u8], info: &str) -> ResultType<()> {
+        sqlx::query!("update peer set pk=?, info=? where guid=?", pk, info, guid)
+            .execute(self.pool.get().await?.deref_mut())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn change_id(&self, guid: &[u8], old_id: &str, new_id: &str) -> ResultType<bool> {
+        let result = sqlx::query!(
+            "update peer set id=? where guid=? and id=?",
+            new_id,
+            guid,
+            old_id
         )
         .execute(self.pool.get().await?.deref_mut())
         .await?;
-        Ok(())
+        Ok(result.rows_affected() == 1)
     }
 }
 

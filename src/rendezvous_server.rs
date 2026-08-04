@@ -691,6 +691,17 @@ impl RendezvousServer {
         addr: SocketAddr,
         ws: bool,
     ) -> Result<register_pk_response::Result, register_pk_response::Result> {
+        if !rk.old_id.is_empty() {
+            if rk.uuid.is_empty() || !hbb_common::is_valid_custom_id(&rk.id) {
+                return Err(INVALID_ID_FORMAT);
+            }
+            let result = self.pm.change_id(&rk.old_id, &rk.id, &rk.uuid).await;
+            return if result == register_pk_response::Result::OK {
+                Ok(result)
+            } else {
+                Err(result)
+            };
+        }
         if rk.uuid.is_empty() || rk.pk.is_empty() {
             return Err(INVALID_ID_FORMAT);
         }

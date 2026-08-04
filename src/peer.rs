@@ -60,6 +60,7 @@ pub(crate) type LockPeer = Arc<RwLock<Peer>>;
 #[derive(Clone)]
 pub(crate) struct PeerMap {
     map: Arc<RwLock<HashMap<String, LockPeer>>>,
+    change_id_lock: Arc<Mutex<()>>,
     pub(crate) db: database::Database,
 }
 
@@ -82,6 +83,7 @@ impl PeerMap {
         log::info!("DB_URL={}", db);
         let pm = Self {
             map: Default::default(),
+            change_id_lock: Default::default(),
             db: database::Database::new(&db).await?,
         };
         Ok(pm)
@@ -121,12 +123,84 @@ impl PeerMap {
                 }
             }
         } else {
-            if let Err(err) = self.db.update_pk(&guid, &id, &pk, &info_str).await {
+            if let Err(err) = self.db.update_pk(&guid, &pk, &info_str).await {
                 log::error!("db.update_pk failed: {}", err);
                 return register_pk_response::Result::SERVER_ERROR;
             }
             log::info!("pk updated instead of insert");
         }
+        register_pk_response::Result::OK
+    }
+
+    pub(crate) async fn change_id(
+        &self,
+        old_id: &str,
+        new_id: &str,
+        uuid: &[u8],
+    ) -> register_pk_response::Result {
+        let _guard = self.change_id_lock.lock().await;
+
+        let old = match self.db.get_peer(old_id).await {
+            Ok(Some(peer)) => peer,
+            Ok(None) => {
+                return match self.db.get_peer(new_id).await {
+                    Ok(Some(peer)) if peer.uuid == uuid => register_pk_response::Result::OK,
+                    Ok(Some(_)) => register_pk_response::Result::ID_EXISTS,
+                    Ok(None) => register_pk_response::Result::UUID_MISMATCH,
+                    Err(err) => {
+                        log::error!("db.get_peer failed while retrying id change: {}", err);
+                        register_pk_response::Result::SERVER_ERROR
+                    }
+                };
+            }
+            Err(err) => {
+                log::error!("db.get_peer failed while changing id: {}", err);
+                return register_pk_response::Result::SERVER_ERROR;
+            }
+        };
+        if old.uuid != uuid {
+            return register_pk_response::Result::UUID_MISMATCH;
+        }
+        if old_id == new_id {
+            return register_pk_response::Result::OK;
+        }
+
+        match self.db.get_peer(new_id).await {
+            Ok(Some(_)) => return register_pk_response::Result::ID_EXISTS,
+            Ok(None) => {}
+            Err(err) => {
+                log::error!("db.get_peer failed while checking new id: {}", err);
+                return register_pk_response::Result::SERVER_ERROR;
+            }
+        }
+        if self.map.read().await.contains_key(new_id) {
+            return register_pk_response::Result::ID_EXISTS;
+        }
+
+        match self.db.change_id(&old.guid, old_id, new_id).await {
+            Ok(true) => {}
+            Ok(false) => return register_pk_response::Result::UUID_MISMATCH,
+            Err(err) => {
+                if matches!(self.db.get_peer(new_id).await, Ok(Some(_))) {
+                    return register_pk_response::Result::ID_EXISTS;
+                }
+                log::error!("db.change_id failed: {}", err);
+                return register_pk_response::Result::SERVER_ERROR;
+            }
+        }
+
+        let mut map = self.map.write().await;
+        let peer = map.remove(old_id).unwrap_or_else(|| {
+            Arc::new(RwLock::new(Peer {
+                guid: old.guid,
+                uuid: old.uuid.into(),
+                pk: old.pk.into(),
+                info: serde_json::from_str::<PeerInfo>(&old.info).unwrap_or_default(),
+                ..Default::default()
+            }))
+        });
+        map.insert(new_id.to_owned(), peer);
+        log::info!("Peer id changed from {} to {}", old_id, new_id);
         register_pk_response::Result::OK
     }
 
@@ -174,5 +248,82 @@ impl PeerMap {
     #[inline]
     pub(crate) async fn is_in_memory(&self, id: &str) -> bool {
         self.map.read().await.contains_key(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hbb_common::tokio;
+
+    #[test]
+    fn change_id_checks_identity_and_preserves_peer() {
+        run_change_id_checks_identity_and_preserves_peer();
+    }
+
+    #[tokio::main(flavor = "current_thread")]
+    async fn run_change_id_checks_identity_and_preserves_peer() {
+        let path =
+            std::env::temp_dir().join(format!("rustdesk-server-{}.sqlite3", uuid::Uuid::new_v4()));
+        let path_str = path.to_string_lossy().to_string();
+        let db = database::Database::new(&path_str).await.unwrap();
+        let uuid = b"device-uuid";
+        let pk = b"device-public-key";
+        db.insert_peer("123456789", uuid, pk, "{}").await.unwrap();
+        db.insert_peer("taken-id", b"other-uuid", b"other-key", "{}")
+            .await
+            .unwrap();
+        let pm = PeerMap {
+            map: Default::default(),
+            change_id_lock: Default::default(),
+            db,
+        };
+
+        assert_eq!(
+            pm.change_id("123456789", "macbook-pro", b"wrong-uuid")
+                .await,
+            register_pk_response::Result::UUID_MISMATCH
+        );
+        assert_eq!(
+            pm.change_id("123456789", "taken-id", uuid).await,
+            register_pk_response::Result::ID_EXISTS
+        );
+
+        let old_peer = pm.get("123456789").await.unwrap();
+        old_peer.write().await.socket_addr = "127.0.0.1:21116".parse().unwrap();
+        assert_eq!(
+            pm.change_id("123456789", "macbook-pro", uuid).await,
+            register_pk_response::Result::OK
+        );
+        assert!(pm.get_in_memory("123456789").await.is_none());
+        let renamed_peer = pm.get_in_memory("macbook-pro").await.unwrap();
+        assert!(Arc::ptr_eq(&old_peer, &renamed_peer));
+        assert_eq!(
+            renamed_peer.read().await.socket_addr,
+            "127.0.0.1:21116".parse().unwrap()
+        );
+
+        let stored = pm.db.get_peer("macbook-pro").await.unwrap().unwrap();
+        assert_eq!(stored.uuid, uuid);
+        assert_eq!(stored.pk, pk);
+        assert!(pm.db.get_peer("123456789").await.unwrap().is_none());
+        assert_eq!(
+            pm.change_id("123456789", "macbook-pro", uuid).await,
+            register_pk_response::Result::OK
+        );
+
+        drop(renamed_peer);
+        drop(old_peer);
+        drop(pm);
+        let reopened = database::Database::new(&path_str).await.unwrap();
+        assert!(reopened.get_peer("123456789").await.unwrap().is_none());
+        assert_eq!(
+            reopened.get_peer("macbook-pro").await.unwrap().unwrap().pk,
+            pk
+        );
+        drop(reopened);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
     }
 }
