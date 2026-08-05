@@ -6,10 +6,12 @@ on:
     branches: [ "forapi" ]
     paths-ignore:
       - '**/README.md'
+      - '.github/workflows/**'
   pull_request:
     branches: [ "forapi" ]
     paths-ignore:
       - '**/README.md'
+      - '.github/workflows/**'
 
 jobs:
   check:
