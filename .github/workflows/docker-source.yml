@@ -420,3 +420,186 @@ jobs:
         run: |
           docker buildx imagetools create --tag "$IMAGE:$IMAGE_TAG" "$IMAGE:$IMAGE_TAG-amd64" "$IMAGE:$IMAGE_TAG-arm64v8" "$IMAGE:$IMAGE_TAG-armv7" "$IMAGE:$IMAGE_TAG-i386"
           docker buildx imagetools create --tag "$IMAGE:$LATEST_TAG" "$IMAGE:$LATEST_TAG-amd64" "$IMAGE:$LATEST_TAG-arm64v8" "$IMAGE:$LATEST_TAG-armv7" "$IMAGE:$LATEST_TAG-i386"
+
+  cleanup:
+    name: Keep latest 3 image versions
+    needs:
+      - s6-manifest
+      - classic-manifest
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clean up GitHub Container Registry
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_DELETE_TOKEN || github.token }}
+          OWNER: ${{ github.repository_owner }}
+          OWNER_TYPE: ${{ github.event.repository.owner.type }}
+          REPOSITORY_NAME: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
+          ARCH_SUFFIX_PATTERN='-(amd64|arm64v8|armv7|i386)$'
+
+          cleanup_package() {
+            local package="$1"
+            local endpoint
+            local versions_file
+            local old_version
+            local version_id
+            local -a releases
+            local -a version_ids
+            local -a untagged_ids
+
+            if [[ "$OWNER_TYPE" == "Organization" ]]; then
+              endpoint="/orgs/$OWNER/packages/container/$package/versions"
+            else
+              endpoint="/users/$OWNER/packages/container/$package/versions"
+            fi
+
+            versions_file="$(mktemp)"
+            gh api --paginate "$endpoint?per_page=100" | jq -s 'add // []' > "$versions_file"
+            mapfile -t releases < <(
+              jq -r \
+                --arg version_pattern "$VERSION_PATTERN" \
+                --arg arch_suffix_pattern "$ARCH_SUFFIX_PATTERN" '
+                  [
+                    .[] as $version
+                    | ($version.metadata.container.tags // [])[] as $tag
+                    | select($tag | test($version_pattern))
+                    | select(($tag | test($arch_suffix_pattern)) | not)
+                    | {
+                        tag: $tag,
+                        updated_at: ($version.updated_at // $version.created_at)
+                      }
+                  ]
+                  | unique_by(.tag)
+                  | sort_by(.updated_at)
+                  | reverse
+                  | .[].tag
+                ' "$versions_file"
+            )
+
+            echo "$package: keeping ${releases[*]:0:3}"
+            for old_version in "${releases[@]:3}"; do
+              mapfile -t version_ids < <(
+                jq -r --arg old_version "$old_version" '
+                  .[]
+                  | select(
+                      (.metadata.container.tags // []) as $tags
+                      | any(
+                          $tags[];
+                          . == $old_version
+                          or . == ($old_version + "-amd64")
+                          or . == ($old_version + "-arm64v8")
+                          or . == ($old_version + "-armv7")
+                          or . == ($old_version + "-i386")
+                        )
+                      and (any($tags[]; . == "latest" or startswith("latest-")) | not)
+                    )
+                  | .id
+                ' "$versions_file"
+              )
+              for version_id in "${version_ids[@]}"; do
+                echo "$package: deleting $old_version package version $version_id"
+                gh api --method DELETE "$endpoint/$version_id"
+              done
+            done
+
+            mapfile -t untagged_ids < <(
+              jq -r '.[] | select((.metadata.container.tags // []) | length == 0) | .id' "$versions_file"
+            )
+            for version_id in "${untagged_ids[@]}"; do
+              echo "$package: deleting untagged package version $version_id"
+              gh api --method DELETE "$endpoint/$version_id"
+            done
+            rm -f "$versions_file"
+          }
+
+          cleanup_package "$REPOSITORY_NAME-s6"
+          cleanup_package "$REPOSITORY_NAME"
+
+      - name: Clean up Docker Hub
+        if: ${{ always() && env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != '' }}
+        env:
+          NAMESPACE: ${{ env.DOCKERHUB_NAMESPACE }}
+        run: |
+          set -euo pipefail
+          VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
+          ARCH_SUFFIX_PATTERN='-(amd64|arm64v8|armv7|i386)$'
+          AUTH_PAYLOAD="$(jq -n \
+            --arg identifier "$DOCKERHUB_USERNAME" \
+            --arg secret "$DOCKERHUB_TOKEN" \
+            '{identifier: $identifier, secret: $secret}')"
+          HUB_TOKEN="$(curl --fail --silent --show-error \
+            --request POST \
+            --header 'Content-Type: application/json' \
+            --data "$AUTH_PAYLOAD" \
+            https://hub.docker.com/v2/auth/token | jq -er '.access_token')"
+
+          cleanup_repository() {
+            local repository="$1"
+            local tags_file
+            local response_file
+            local url
+            local old_version
+            local tag
+            local -a releases
+            local -a delete_tags
+
+            tags_file="$(mktemp)"
+            response_file="$(mktemp)"
+            url="https://hub.docker.com/v2/namespaces/$NAMESPACE/repositories/$repository/tags?page_size=100"
+            while [[ -n "$url" ]]; do
+              curl --fail --silent --show-error \
+                --header "Authorization: Bearer $HUB_TOKEN" \
+                "$url" > "$response_file"
+              jq -c '.results[]' "$response_file" >> "$tags_file"
+              url="$(jq -r '.next // empty' "$response_file")"
+            done
+
+            mapfile -t releases < <(
+              jq -s -r \
+                --arg version_pattern "$VERSION_PATTERN" \
+                --arg arch_suffix_pattern "$ARCH_SUFFIX_PATTERN" '
+                  [
+                    .[]
+                    | select(.name | test($version_pattern))
+                    | select((.name | test($arch_suffix_pattern)) | not)
+                    | {
+                        tag: .name,
+                        updated_at: (.tag_last_pushed // .last_updated)
+                      }
+                  ]
+                  | unique_by(.tag)
+                  | sort_by(.updated_at)
+                  | reverse
+                  | .[].tag
+                ' "$tags_file"
+            )
+
+            echo "$repository: keeping ${releases[*]:0:3}"
+            for old_version in "${releases[@]:3}"; do
+              mapfile -t delete_tags < <(
+                jq -s -r --arg old_version "$old_version" '
+                  .[].name
+                  | select(
+                      . == $old_version
+                      or . == ($old_version + "-amd64")
+                      or . == ($old_version + "-arm64v8")
+                      or . == ($old_version + "-armv7")
+                      or . == ($old_version + "-i386")
+                    )
+                ' "$tags_file"
+              )
+              for tag in "${delete_tags[@]}"; do
+                echo "$repository: deleting tag $tag"
+                curl --fail --silent --show-error \
+                  --request DELETE \
+                  --header "Authorization: Bearer $HUB_TOKEN" \
+                  "https://hub.docker.com/v2/namespaces/$NAMESPACE/repositories/$repository/tags/$tag"
+              done
+            done
+            rm -f "$tags_file" "$response_file"
+          }
+
+          cleanup_repository rustdesk-server-s6
+          cleanup_repository rustdesk-server
