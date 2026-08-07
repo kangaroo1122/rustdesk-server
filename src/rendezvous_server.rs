@@ -34,6 +34,7 @@ use hbb_common::{
     AddrMangle, ResultType,
 };
 use ipnetwork::Ipv4Network;
+use serde_derive::Deserialize;
 
 use crate::jwt;
 use once_cell::sync::Lazy;
@@ -53,6 +54,8 @@ enum Data {
 }
 
 const REG_TIMEOUT: i64 = 30_000;
+const MANAGEMENT_REQUEST_LIMIT: usize = 1024;
+const MANAGEMENT_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
 type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
 struct SafeWsSink {
@@ -69,6 +72,54 @@ enum Sink {
     // Ws(WsSink),
     Wss(SafeWsSink),
     Tss(SafeTcpStreamSink),
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RegistryRequest {
+    operation: String,
+    #[serde(default)]
+    page: Option<u32>,
+    #[serde(default)]
+    page_size: Option<u32>,
+    #[serde(default)]
+    keyword: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    uuid: Option<String>,
+    #[serde(default)]
+    public_key_fingerprint: Option<String>,
+    #[serde(default)]
+    force: bool,
+}
+
+fn registry_success<T: serde::Serialize>(data: T) -> String {
+    serde_json::json!({
+        "version": 1,
+        "success": true,
+        "data": data,
+    })
+    .to_string()
+}
+
+fn registry_error(code: &str, message: &str) -> String {
+    serde_json::json!({
+        "version": 1,
+        "success": false,
+        "error": {
+            "code": code,
+            "message": message,
+        },
+    })
+    .to_string()
+}
+
+fn valid_registry_id(id: Option<String>) -> Option<String> {
+    id.filter(|value| {
+        !value.is_empty()
+            && value.len() <= 100
+            && !value.chars().any(|character| character.is_control())
+    })
 }
 
 impl Sink {
@@ -796,32 +847,7 @@ impl RendezvousServer {
 
     #[inline]
     async fn update_addr(&mut self, id: String, socket_addr: SocketAddr) -> bool {
-        let (request_pk, ip_change) = if let Some(old) = self.pm.get_in_memory(&id).await {
-            let mut old = old.write().await;
-            let ip = socket_addr.ip();
-            let ip_change = if old.socket_addr.port() != 0 {
-                ip != old.socket_addr.ip()
-            } else {
-                ip.to_string() != old.info.ip
-            } && !ip.is_loopback();
-            let request_pk = old.pk.is_empty() || ip_change;
-            if !request_pk {
-                old.socket_addr = socket_addr;
-                old.last_reg_time = Instant::now();
-            }
-            let ip_change = if ip_change && old.reg_pk.0 <= 2 {
-                Some(if old.socket_addr.port() == 0 {
-                    old.info.ip.clone()
-                } else {
-                    old.socket_addr.to_string()
-                })
-            } else {
-                None
-            };
-            (request_pk, ip_change)
-        } else {
-            (true, None)
-        };
+        let (request_pk, ip_change) = self.pm.update_registration_addr(&id, socket_addr).await;
         if let Some(old) = ip_change {
             log::info!("IP change of {} from {} to {}", id, old, socket_addr);
         }
@@ -1353,9 +1379,99 @@ impl RendezvousServer {
                     let _ = writeln!(res, "MUST_LOGIN: {:?}", MUST_LOGIN.load(Ordering::SeqCst));
                 }
             }
+            Some("registry-v1") => {
+                return self.check_registry_cmd(fds.next()).await;
+            }
             _ => {}
         }
         res
+    }
+
+    async fn check_registry_cmd(&self, payload: Option<&str>) -> String {
+        let Some(payload) = payload else {
+            return registry_error("INVALID_REQUEST", "Missing registry request");
+        };
+        let decoded = match base64::decode_config(payload, base64::URL_SAFE_NO_PAD) {
+            Ok(decoded) => decoded,
+            Err(_) => return registry_error("INVALID_REQUEST", "Invalid registry request"),
+        };
+        let request = match serde_json::from_slice::<RegistryRequest>(&decoded) {
+            Ok(request) => request,
+            Err(_) => return registry_error("INVALID_REQUEST", "Invalid registry request"),
+        };
+        match request.operation.as_str() {
+            "list" => {
+                let page = request.page.unwrap_or(1);
+                let page_size = request.page_size.unwrap_or(50);
+                let keyword = request.keyword.unwrap_or_default();
+                if page == 0 || page_size == 0 || page_size > 100 {
+                    return registry_error("INVALID_PAGE_SIZE", "Invalid pagination");
+                }
+                if keyword.chars().count() > 100 {
+                    return registry_error("INVALID_REQUEST", "Keyword is too long");
+                }
+                match self.pm.list_registry_peers(page, page_size, &keyword).await {
+                    Ok(data) => registry_success(data),
+                    Err(err) => {
+                        log::error!("Failed to list registry peers: {err}");
+                        registry_error("DATABASE_ERROR", "Registry query failed")
+                    }
+                }
+            }
+            "detail" => {
+                let Some(id) = valid_registry_id(request.id) else {
+                    return registry_error("INVALID_REQUEST", "Invalid peer ID");
+                };
+                match self.pm.registry_peer_detail(&id).await {
+                    Ok(Some(data)) => registry_success(data),
+                    Ok(None) => registry_error("PEER_NOT_FOUND", "Peer not found"),
+                    Err(err) => {
+                        log::error!("Failed to query registry peer: {err}");
+                        registry_error("DATABASE_ERROR", "Registry query failed")
+                    }
+                }
+            }
+            "stats" => match self.pm.registry_stats().await {
+                Ok(data) => registry_success(data),
+                Err(err) => {
+                    log::error!("Failed to query registry stats: {err}");
+                    registry_error("DATABASE_ERROR", "Registry query failed")
+                }
+            },
+            "delete" => {
+                let Some(id) = valid_registry_id(request.id) else {
+                    return registry_error("INVALID_REQUEST", "Invalid peer ID");
+                };
+                let Some(uuid) = request.uuid.and_then(|value| base64::decode(value).ok()) else {
+                    return registry_error("INVALID_REQUEST", "Invalid peer identity");
+                };
+                let Some(fingerprint) = request.public_key_fingerprint else {
+                    return registry_error("INVALID_REQUEST", "Invalid peer identity");
+                };
+                match self
+                    .pm
+                    .delete_registry_peer(&id, &uuid, &fingerprint, request.force)
+                    .await
+                {
+                    Ok(()) => registry_success(serde_json::json!({ "id": id })),
+                    Err(RegistryDeleteError::NotFound) => {
+                        registry_error("PEER_NOT_FOUND", "Peer not found")
+                    }
+                    Err(RegistryDeleteError::IdentityMismatch) => registry_error(
+                        "PEER_IDENTITY_CHANGED",
+                        "Peer identity changed; refresh and try again",
+                    ),
+                    Err(RegistryDeleteError::RecentlyActive) => registry_error(
+                        "PEER_RECENTLY_ACTIVE",
+                        "Peer registered recently; force is required",
+                    ),
+                    Err(RegistryDeleteError::Database) => {
+                        registry_error("DATABASE_ERROR", "Registry delete failed")
+                    }
+                }
+            }
+            _ => registry_error("INVALID_REQUEST", "Unsupported registry operation"),
+        }
     }
 
     async fn handle_listener2(&self, stream: TcpStream, addr: SocketAddr) {
@@ -1364,12 +1480,46 @@ impl RendezvousServer {
         if ip.is_loopback() {
             tokio::spawn(async move {
                 let mut stream = stream;
-                let mut buffer = [0; 1024];
-                if let Ok(Ok(n)) = timeout(1000, stream.read(&mut buffer[..])).await {
-                    if let Ok(data) = std::str::from_utf8(&buffer[..n]) {
-                        let res = rs.check_cmd(data).await;
-                        stream.write_all(res.as_bytes()).await.ok();
+                let mut request = Vec::new();
+                let mut chunk = [0_u8; 512];
+                loop {
+                    let wait_ms = if request.is_empty() { 1000 } else { 100 };
+                    match timeout(wait_ms, stream.read(&mut chunk)).await {
+                        Ok(Ok(0)) => break,
+                        Ok(Ok(n)) => {
+                            request.extend_from_slice(&chunk[..n]);
+                            if request.len() > MANAGEMENT_REQUEST_LIMIT || request.contains(&b'\n')
+                            {
+                                break;
+                            }
+                            let prefix = b"registry-v1 ";
+                            if !prefix.starts_with(&request) && !request.starts_with(prefix) {
+                                break;
+                            }
+                        }
+                        _ => break,
                     }
+                }
+                let response = if request.len() > MANAGEMENT_REQUEST_LIMIT {
+                    registry_error("REQUEST_TOO_LARGE", "Registry request is too large")
+                } else if let Some(newline) = request.iter().position(|byte| *byte == b'\n') {
+                    match std::str::from_utf8(&request[..newline]) {
+                        Ok(data) => rs.check_cmd(data).await,
+                        Err(_) => registry_error("INVALID_REQUEST", "Invalid registry request"),
+                    }
+                } else {
+                    match std::str::from_utf8(&request) {
+                        Ok(data) => rs.check_cmd(data).await,
+                        Err(_) => String::new(),
+                    }
+                };
+                let response = if response.len() > MANAGEMENT_RESPONSE_LIMIT {
+                    registry_error("RESPONSE_TOO_LARGE", "Registry response is too large")
+                } else {
+                    response
+                };
+                if stream.write_all(response.as_bytes()).await.is_ok() {
+                    stream.shutdown().await.ok();
                 }
             });
             return;

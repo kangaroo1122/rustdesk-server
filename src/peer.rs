@@ -10,6 +10,8 @@ use hbb_common::{
 use serde_derive::{Deserialize, Serialize};
 use std::{collections::HashMap, collections::HashSet, net::SocketAddr, sync::Arc, time::Instant};
 
+const REGISTRY_RECENT_SECONDS: u64 = 30;
+
 type IpBlockMap = HashMap<String, ((u32, Instant), (HashSet<String>, Instant))>;
 type IpChangesMap = HashMap<String, (Instant, HashMap<String, i32>)>;
 lazy_static::lazy_static! {
@@ -57,6 +59,46 @@ impl Default for Peer {
 
 pub(crate) type LockPeer = Arc<RwLock<Peer>>;
 
+#[derive(Debug, Serialize)]
+pub(crate) struct RegistryPeerView {
+    pub(crate) id: String,
+    pub(crate) guid: String,
+    pub(crate) uuid: String,
+    pub(crate) public_key: Option<String>,
+    pub(crate) public_key_fingerprint: String,
+    pub(crate) register_ip: String,
+    pub(crate) created_at: String,
+    pub(crate) status: Option<i64>,
+    pub(crate) note: Option<String>,
+    pub(crate) in_memory: bool,
+    pub(crate) registered_recently: bool,
+    pub(crate) last_register_seconds: Option<u64>,
+    pub(crate) memory_socket_addr: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RegistryPeerList {
+    pub(crate) total: u64,
+    pub(crate) page: u32,
+    pub(crate) page_size: u32,
+    pub(crate) list: Vec<RegistryPeerView>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RegistryStats {
+    pub(crate) total: u64,
+    pub(crate) in_memory: u64,
+    pub(crate) registered_recently: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum RegistryDeleteError {
+    NotFound,
+    IdentityMismatch,
+    RecentlyActive,
+    Database,
+}
+
 #[derive(Clone)]
 pub(crate) struct PeerMap {
     map: Arc<RwLock<HashMap<String, LockPeer>>>,
@@ -99,6 +141,7 @@ impl PeerMap {
         pk: Bytes,
         ip: String,
     ) -> register_pk_response::Result {
+        let _guard = self.change_id_lock.lock().await;
         log::info!("update_pk {} {:?} {:?} {:?}", id, addr, uuid, pk);
         let (info_str, guid) = {
             let mut w = peer.write().await;
@@ -209,7 +252,12 @@ impl PeerMap {
         let p = self.map.read().await.get(id).cloned();
         if p.is_some() {
             return p;
-        } else if let Ok(Some(v)) = self.db.get_peer(id).await {
+        }
+        let _guard = self.change_id_lock.lock().await;
+        if let Some(peer) = self.map.read().await.get(id).cloned() {
+            return Some(peer);
+        }
+        if let Ok(Some(v)) = self.db.get_peer(id).await {
             let peer = Peer {
                 guid: v.guid,
                 uuid: v.uuid.into(),
@@ -245,10 +293,189 @@ impl PeerMap {
         self.map.read().await.get(id).cloned()
     }
 
+    pub(crate) async fn update_registration_addr(
+        &self,
+        id: &str,
+        socket_addr: SocketAddr,
+    ) -> (bool, Option<String>) {
+        let _guard = self.change_id_lock.lock().await;
+        let Some(old) = self.map.read().await.get(id).cloned() else {
+            return (true, None);
+        };
+        let mut old = old.write().await;
+        let ip = socket_addr.ip();
+        let ip_change = if old.socket_addr.port() != 0 {
+            ip != old.socket_addr.ip()
+        } else {
+            ip.to_string() != old.info.ip
+        } && !ip.is_loopback();
+        let request_pk = old.pk.is_empty() || ip_change;
+        if !request_pk {
+            old.socket_addr = socket_addr;
+            old.last_reg_time = Instant::now();
+        }
+        let old_addr = if ip_change && old.reg_pk.0 <= 2 {
+            Some(if old.socket_addr.port() == 0 {
+                old.info.ip.clone()
+            } else {
+                old.socket_addr.to_string()
+            })
+        } else {
+            None
+        };
+        (request_pk, old_addr)
+    }
+
     #[inline]
     pub(crate) async fn is_in_memory(&self, id: &str) -> bool {
         self.map.read().await.contains_key(id)
     }
+
+    pub(crate) async fn list_registry_peers(
+        &self,
+        page: u32,
+        page_size: u32,
+        keyword: &str,
+    ) -> ResultType<RegistryPeerList> {
+        let total = self.db.count_registry_peers(keyword).await?;
+        let records = self
+            .db
+            .list_registry_peers(page, page_size, keyword)
+            .await?;
+        let mut list = Vec::with_capacity(records.len());
+        for record in records {
+            list.push(self.registry_peer_view(record, false).await);
+        }
+        Ok(RegistryPeerList {
+            total,
+            page,
+            page_size,
+            list,
+        })
+    }
+
+    pub(crate) async fn registry_peer_detail(
+        &self,
+        id: &str,
+    ) -> ResultType<Option<RegistryPeerView>> {
+        match self.db.get_registry_peer(id).await? {
+            Some(record) => Ok(Some(self.registry_peer_view(record, true).await)),
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) async fn registry_stats(&self) -> ResultType<RegistryStats> {
+        let total = self.db.count_registry_peers("").await?;
+        let peers: Vec<LockPeer> = self.map.read().await.values().cloned().collect();
+        let mut registered_recently = 0;
+        for peer in &peers {
+            if peer.read().await.last_reg_time.elapsed().as_secs() < REGISTRY_RECENT_SECONDS {
+                registered_recently += 1;
+            }
+        }
+        Ok(RegistryStats {
+            total,
+            in_memory: peers.len() as u64,
+            registered_recently,
+        })
+    }
+
+    pub(crate) async fn delete_registry_peer(
+        &self,
+        id: &str,
+        uuid: &[u8],
+        public_key_fingerprint: &str,
+        force: bool,
+    ) -> Result<(), RegistryDeleteError> {
+        let _guard = self.change_id_lock.lock().await;
+        let record = self
+            .db
+            .get_registry_peer(id)
+            .await
+            .map_err(|err| {
+                log::error!("db.get_registry_peer failed while deleting {id}: {err}");
+                RegistryDeleteError::Database
+            })?
+            .ok_or(RegistryDeleteError::NotFound)?;
+        if record.uuid != uuid || public_key_fingerprint_of(&record.pk) != public_key_fingerprint {
+            return Err(RegistryDeleteError::IdentityMismatch);
+        }
+        if !force {
+            if let Some(peer) = self.map.read().await.get(id).cloned() {
+                if peer.read().await.last_reg_time.elapsed().as_secs() < REGISTRY_RECENT_SECONDS {
+                    return Err(RegistryDeleteError::RecentlyActive);
+                }
+            }
+        }
+        let deleted = self
+            .db
+            .delete_registry_peer(&record.guid, id, &record.uuid, &record.pk)
+            .await
+            .map_err(|err| {
+                log::error!("db.delete_registry_peer failed for {id}: {err}");
+                RegistryDeleteError::Database
+            })?;
+        if !deleted {
+            return Err(RegistryDeleteError::IdentityMismatch);
+        }
+        self.map.write().await.remove(id);
+        log::info!("Peer {id} deleted from registry");
+        Ok(())
+    }
+
+    async fn registry_peer_view(
+        &self,
+        record: database::RegistryPeer,
+        include_public_key: bool,
+    ) -> RegistryPeerView {
+        let memory = self.map.read().await.get(&record.id).cloned();
+        let (in_memory, registered_recently, last_register_seconds, memory_socket_addr) =
+            if let Some(peer) = memory {
+                let peer = peer.read().await;
+                let seconds = peer.last_reg_time.elapsed().as_secs();
+                let socket_addr =
+                    (peer.socket_addr.port() != 0).then(|| peer.socket_addr.to_string());
+                (
+                    true,
+                    seconds < REGISTRY_RECENT_SECONDS,
+                    Some(seconds),
+                    socket_addr,
+                )
+            } else {
+                (false, false, None, None)
+            };
+        let info = serde_json::from_str::<PeerInfo>(&record.info).unwrap_or_default();
+        RegistryPeerView {
+            id: record.id,
+            guid: base64::encode(record.guid),
+            uuid: base64::encode(record.uuid),
+            public_key: include_public_key.then(|| base64::encode(&record.pk)),
+            public_key_fingerprint: public_key_fingerprint_of(&record.pk),
+            register_ip: info.ip,
+            created_at: sqlite_datetime_to_rfc3339(&record.created_at),
+            status: record.status,
+            note: record.note,
+            in_memory,
+            registered_recently,
+            last_register_seconds,
+            memory_socket_addr,
+        }
+    }
+}
+
+fn public_key_fingerprint_of(public_key: &[u8]) -> String {
+    let digest = hbb_common::sodiumoxide::crypto::hash::sha256::hash(public_key);
+    format!("SHA256:{}", base64::encode(digest.0).trim_end_matches('='))
+}
+
+fn sqlite_datetime_to_rfc3339(value: &str) -> String {
+    chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
+        .map(|value| {
+            value
+                .and_utc()
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        })
+        .unwrap_or_else(|_| value.to_owned())
 }
 
 #[cfg(test)]
@@ -259,6 +486,11 @@ mod tests {
     #[test]
     fn change_id_checks_identity_and_preserves_peer() {
         run_change_id_checks_identity_and_preserves_peer();
+    }
+
+    #[test]
+    fn registry_lists_and_deletes_without_loading_peers() {
+        run_registry_lists_and_deletes_without_loading_peers();
     }
 
     #[tokio::main(flavor = "current_thread")]
@@ -322,6 +554,60 @@ mod tests {
             pk
         );
         drop(reopened);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[tokio::main(flavor = "current_thread")]
+    async fn run_registry_lists_and_deletes_without_loading_peers() {
+        let path = std::env::temp_dir().join(format!(
+            "rustdesk-server-registry-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+        let db = database::Database::new(&path_str).await.unwrap();
+        let uuid = b"device-uuid";
+        let pk = b"device-public-key";
+        db.insert_peer("mac%book", uuid, pk, r#"{"ip":"192.0.2.10"}"#)
+            .await
+            .unwrap();
+        db.insert_peer("other-device", b"other-uuid", b"other-key", "{}")
+            .await
+            .unwrap();
+        let pm = PeerMap {
+            map: Default::default(),
+            change_id_lock: Default::default(),
+            db,
+        };
+
+        let list = pm.list_registry_peers(1, 50, "%").await.unwrap();
+        assert_eq!(list.total, 1);
+        assert_eq!(list.list[0].id, "mac%book");
+        assert_eq!(list.list[0].register_ip, "192.0.2.10");
+        assert!(!list.list[0].in_memory);
+        assert!(pm.map.read().await.is_empty());
+
+        let detail = pm.registry_peer_detail("mac%book").await.unwrap().unwrap();
+        assert_eq!(detail.public_key, Some(base64::encode(pk)));
+        assert_eq!(detail.uuid, base64::encode(uuid));
+        assert_eq!(
+            pm.delete_registry_peer(
+                "mac%book",
+                b"wrong-uuid",
+                &detail.public_key_fingerprint,
+                true,
+            )
+            .await,
+            Err(RegistryDeleteError::IdentityMismatch)
+        );
+        pm.delete_registry_peer("mac%book", uuid, &detail.public_key_fingerprint, true)
+            .await
+            .unwrap();
+        assert!(pm.registry_peer_detail("mac%book").await.unwrap().is_none());
+        assert!(pm.get("mac%book").await.is_none());
+
+        drop(pm);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }

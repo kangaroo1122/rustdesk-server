@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use hbb_common::{log, ResultType};
 use sqlx::{
-    sqlite::SqliteConnectOptions, ConnectOptions, Connection, Error as SqlxError, SqliteConnection,
+    sqlite::SqliteConnectOptions, ConnectOptions, Connection, Error as SqlxError, Row,
+    SqliteConnection,
 };
 use std::{ops::DerefMut, str::FromStr};
 //use sqlx::postgres::PgPoolOptions;
@@ -45,6 +46,18 @@ pub struct Peer {
     pub user: Option<Vec<u8>>,
     pub info: String,
     pub status: Option<i64>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RegistryPeer {
+    pub guid: Vec<u8>,
+    pub id: String,
+    pub uuid: Vec<u8>,
+    pub pk: Vec<u8>,
+    pub created_at: String,
+    pub status: Option<i64>,
+    pub note: Option<String>,
+    pub info: String,
 }
 
 impl Database {
@@ -143,6 +156,88 @@ impl Database {
         .await?;
         Ok(result.rows_affected() == 1)
     }
+
+    pub(crate) async fn list_registry_peers(
+        &self,
+        page: u32,
+        page_size: u32,
+        keyword: &str,
+    ) -> ResultType<Vec<RegistryPeer>> {
+        let pattern = registry_keyword_pattern(keyword);
+        let offset = i64::from(page - 1) * i64::from(page_size);
+        let limit = i64::from(page_size);
+        let rows = sqlx::query(
+            "select guid, id, uuid, pk, created_at, status, note, info
+             from peer
+             where id like ? escape '\\'
+             order by created_at desc, id asc
+             limit ? offset ?",
+        )
+        .bind(pattern)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(self.pool.get().await?.deref_mut())
+        .await?;
+        rows.into_iter().map(registry_peer_from_row).collect()
+    }
+
+    pub(crate) async fn count_registry_peers(&self, keyword: &str) -> ResultType<u64> {
+        let pattern = registry_keyword_pattern(keyword);
+        let row = sqlx::query("select count(*) as total from peer where id like ? escape '\\'")
+            .bind(pattern)
+            .fetch_one(self.pool.get().await?.deref_mut())
+            .await?;
+        Ok(row.try_get::<i64, _>("total")?.max(0) as u64)
+    }
+
+    pub(crate) async fn get_registry_peer(&self, id: &str) -> ResultType<Option<RegistryPeer>> {
+        let row = sqlx::query(
+            "select guid, id, uuid, pk, created_at, status, note, info from peer where id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.pool.get().await?.deref_mut())
+        .await?;
+        row.map(registry_peer_from_row).transpose()
+    }
+
+    pub(crate) async fn delete_registry_peer(
+        &self,
+        guid: &[u8],
+        id: &str,
+        uuid: &[u8],
+        pk: &[u8],
+    ) -> ResultType<bool> {
+        let result =
+            sqlx::query("delete from peer where guid = ? and id = ? and uuid = ? and pk = ?")
+                .bind(guid)
+                .bind(id)
+                .bind(uuid)
+                .bind(pk)
+                .execute(self.pool.get().await?.deref_mut())
+                .await?;
+        Ok(result.rows_affected() == 1)
+    }
+}
+
+fn registry_keyword_pattern(keyword: &str) -> String {
+    let escaped = keyword
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
+fn registry_peer_from_row(row: sqlx::sqlite::SqliteRow) -> ResultType<RegistryPeer> {
+    Ok(RegistryPeer {
+        guid: row.try_get("guid")?,
+        id: row.try_get("id")?,
+        uuid: row.try_get("uuid")?,
+        pk: row.try_get("pk")?,
+        created_at: row.try_get("created_at")?,
+        status: row.try_get("status")?,
+        note: row.try_get("note")?,
+        info: row.try_get("info")?,
+    })
 }
 
 #[cfg(test)]
