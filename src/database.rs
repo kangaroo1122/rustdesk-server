@@ -139,9 +139,12 @@ impl Database {
     }
 
     pub async fn update_pk(&self, guid: &Vec<u8>, pk: &[u8], info: &str) -> ResultType<()> {
-        sqlx::query!("update peer set pk=?, info=? where guid=?", pk, info, guid)
+        let result = sqlx::query!("update peer set pk=?, info=? where guid=?", pk, info, guid)
             .execute(self.pool.get().await?.deref_mut())
             .await?;
+        if result.rows_affected() != 1 {
+            hbb_common::bail!("Registered peer no longer exists");
+        }
         Ok(())
     }
 

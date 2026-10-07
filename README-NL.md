@@ -258,6 +258,20 @@ Voor dit container bestand (image) kunt u deze omgevingsvariabelen gebruiken, **
 | KEY_PUB | yes | het openbare deel van het key paar |
 | KEY_PRIV | yes | het private deel van het key paar |
 
+### HBBS/API-integratie
+
+Stel deze variabelen in op de S6-container van deze fork om API-aanmeldcontrole, apparaattoelating en centrale machtigingen in te schakelen:
+
+```yaml
+environment:
+  RUSTDESK_API_INTERNAL_URL: "http://127.0.0.1:21114"
+  RUSTDESK_API_CLIENT_COMPATIBILITY_INTERNAL_SECRET: "${RUSTDESK_INTERNAL_SECRET}"
+```
+
+Stel `RUSTDESK_INTERNAL_SECRET` in de deploymentomgeving in op een willekeurige sleutel van minimaal 32 bytes. HBBS en de API moeten dezelfde sleutel en lokale netwerknamespace gebruiken. De API-URL mag geen pad of queryparameters bevatten. Zonder `RUSTDESK_API_INTERNAL_URL` blijft de integratie uitgeschakeld; als deze is ingeschakeld, worden nieuwe verbindingen geweigerd wanneer de API niet beschikbaar is. `MUST_LOGIN=Y` vereist dat gebruikers zich aanmelden. Zie de [API-README (Engels)](https://github.com/kangaroo1122/rustdesk-api/blob/master/README_EN.md) voor apparaatregels en opnamen.
+
+WebRTC-signalering vereist HBBS-sleuteluitwisseling (`-k`) en de bijbehorende openbare serversleutel op clients. WebSocket vereist WSS met langdurige verbindingen; TURN moet apart worden ingericht. Clients met versie 1.4.9 blijven het oorspronkelijke verbindingsprotocol gebruiken.
+
 ### Geheim beheer in S6-overlay gebaseerde bestanden (images)
 
 U kunt uiteraard het key paar bewaren in een docker volume, maar de optimale werkwijzen vertellen u om de keys niet op het bestandssysteem te schrijven; dus bieden we een paar opties.

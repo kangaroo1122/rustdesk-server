@@ -265,6 +265,20 @@ services:
 | KEY_PUB        | 是    | 密钥对中的公钥（Public Key）      |
 | KEY_PRIV       | 是    | 密钥对中的私钥（Private Key）     |
 
+### HBBS 与 API 联动
+
+在 S6 容器中设置以下变量，可启用 API 登录校验、设备准入和集中权限：
+
+```yaml
+environment:
+  RUSTDESK_API_INTERNAL_URL: "http://127.0.0.1:21114"
+  RUSTDESK_API_CLIENT_COMPATIBILITY_INTERNAL_SECRET: "${RUSTDESK_INTERNAL_SECRET}"
+```
+
+在部署环境中为 `RUSTDESK_INTERNAL_SECRET` 设置至少 32 字节的随机密钥，HBBS 与 API 使用相同值。API 地址不带路径或查询参数；API 与 HBBS 需共用本机网络。未设置 `RUSTDESK_API_INTERNAL_URL` 时不启用联动；启用后 API 不可用会拒绝新连接。`MUST_LOGIN=Y` 要求用户登录。设备策略和录像配置见 [API README](https://github.com/kangaroo1122/rustdesk-api/blob/master/README.md)。
+
+WebRTC 信令要求 HBBS 开启密钥交换（`-k`），客户端配置匹配的服务器公钥。WebSocket 部署需提供 WSS 并保留长连接；TURN 需另行部署。客户端 1.4.9 继续使用原连接协议。
+
 ###  基于 S6-overlay 镜像的密钥管理
 
 您可以将密钥对保存在 Docker volume 中，但我们建议不要将密钥写入文件系統中；因此，我们提供了一些方案。

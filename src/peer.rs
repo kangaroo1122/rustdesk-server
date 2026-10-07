@@ -1,9 +1,9 @@
 use crate::common::*;
 use crate::database;
+use crate::protocol::rendezvous::*;
 use hbb_common::{
     bytes::Bytes,
     log,
-    rendezvous_proto::*,
     tokio::sync::{Mutex, RwLock},
     ResultType,
 };
@@ -107,6 +107,15 @@ pub(crate) struct PeerMap {
 }
 
 impl PeerMap {
+    #[cfg(test)]
+    pub(crate) fn with_database(db: database::Database) -> Self {
+        Self {
+            map: Default::default(),
+            change_id_lock: Default::default(),
+            db,
+        }
+    }
+
     pub(crate) async fn new() -> ResultType<Self> {
         let db = std::env::var("DB_URL").unwrap_or({
             let mut db = "db_v2.sqlite3".to_owned();
@@ -142,36 +151,40 @@ impl PeerMap {
         ip: String,
     ) -> register_pk_response::Result {
         let _guard = self.change_id_lock.lock().await;
-        log::info!("update_pk {} {:?} {:?} {:?}", id, addr, uuid, pk);
-        let (info_str, guid) = {
-            let mut w = peer.write().await;
-            w.socket_addr = addr;
-            w.uuid = uuid.clone();
-            w.pk = pk.clone();
-            w.last_reg_time = Instant::now();
-            w.info.ip = ip;
-            (
-                serde_json::to_string(&w.info).unwrap_or_default(),
-                w.guid.clone(),
-            )
+        // Recheck after admission/network waits and serialize with rename/delete.
+        let current = self.map.read().await.get(&id).cloned();
+        if !current.is_some_and(|current| Arc::ptr_eq(&current, &peer)) {
+            return register_pk_response::Result::UUID_MISMATCH;
+        }
+        let (mut info, mut guid) = {
+            let r = peer.read().await;
+            if !r.uuid.is_empty() && (r.uuid != uuid || (r.info.ip != ip && r.pk != pk)) {
+                return register_pk_response::Result::UUID_MISMATCH;
+            }
+            (r.info.clone(), r.guid.clone())
         };
+        info.ip = ip;
+        let info_str = serde_json::to_string(&info).unwrap_or_default();
         if guid.is_empty() {
             match self.db.insert_peer(&id, &uuid, &pk, &info_str).await {
+                Ok(value) => guid = value,
                 Err(err) => {
                     log::error!("db.insert_peer failed: {}", err);
                     return register_pk_response::Result::SERVER_ERROR;
                 }
-                Ok(guid) => {
-                    peer.write().await.guid = guid;
-                }
             }
-        } else {
-            if let Err(err) = self.db.update_pk(&guid, &pk, &info_str).await {
-                log::error!("db.update_pk failed: {}", err);
-                return register_pk_response::Result::SERVER_ERROR;
-            }
-            log::info!("pk updated instead of insert");
+        } else if let Err(err) = self.db.update_pk(&guid, &pk, &info_str).await {
+            log::error!("db.update_pk failed: {}", err);
+            return register_pk_response::Result::SERVER_ERROR;
         }
+        // Publish only persisted identities; a failed write must never register an online peer.
+        let mut w = peer.write().await;
+        w.guid = guid;
+        w.socket_addr = addr;
+        w.uuid = uuid;
+        w.pk = pk;
+        w.last_reg_time = Instant::now();
+        w.info = info;
         register_pk_response::Result::OK
     }
 
@@ -482,6 +495,99 @@ fn sqlite_datetime_to_rfc3339(value: &str) -> String {
 mod tests {
     use super::*;
     use hbb_common::tokio;
+
+    #[tokio::test]
+    async fn concurrent_registration_persists_one_identity_and_failed_write_stays_offline() {
+        let path = std::env::temp_dir().join(format!(
+            "hbbs-registration-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        let db = database::Database::new(path.to_str().unwrap())
+            .await
+            .unwrap();
+        let mut pm = PeerMap::with_database(db);
+        let peer = pm.get_or("race123").await;
+        let mut other = pm.clone();
+        let addr = "127.0.0.1:21116".parse().unwrap();
+        let (a, b) = tokio::join!(
+            pm.update_pk(
+                "race123".into(),
+                peer.clone(),
+                addr,
+                Bytes::from_static(b"uuid-a"),
+                Bytes::from_static(b"key-a"),
+                "127.0.0.1".into()
+            ),
+            other.update_pk(
+                "race123".into(),
+                peer.clone(),
+                addr,
+                Bytes::from_static(b"uuid-b"),
+                Bytes::from_static(b"key-b"),
+                "127.0.0.1".into()
+            )
+        );
+        assert!(matches!(
+            (a, b),
+            (
+                register_pk_response::Result::OK,
+                register_pk_response::Result::UUID_MISMATCH
+            ) | (
+                register_pk_response::Result::UUID_MISMATCH,
+                register_pk_response::Result::OK
+            )
+        ));
+        let persisted = pm.db.get_peer("race123").await.unwrap().unwrap();
+        assert_eq!(peer.read().await.uuid.as_ref(), persisted.uuid.as_slice());
+        assert_eq!(peer.read().await.pk.as_ref(), persisted.pk.as_slice());
+        let pending = pm.get_or("conflict123").await;
+        pm.db
+            .insert_peer("conflict123", b"owner", b"owner-key", "{}")
+            .await
+            .unwrap();
+        assert_eq!(
+            pm.update_pk(
+                "conflict123".into(),
+                pending.clone(),
+                addr,
+                Bytes::from_static(b"intruder"),
+                Bytes::from_static(b"new-key"),
+                "127.0.0.1".into()
+            )
+            .await,
+            register_pk_response::Result::SERVER_ERROR
+        );
+        assert!(pending.read().await.uuid.is_empty());
+        assert_eq!(pending.read().await.socket_addr.port(), 0);
+        drop(peer);
+        drop(pending);
+        drop(pm);
+        drop(other);
+        let reopened = PeerMap::with_database(
+            database::Database::new(path.to_str().unwrap())
+                .await
+                .unwrap(),
+        );
+        let peer = reopened.get("race123").await.unwrap();
+        assert_eq!(peer.read().await.uuid.as_ref(), persisted.uuid.as_slice());
+        assert!(!reopened.update_registration_addr("race123", addr).await.0);
+        assert_eq!(peer.read().await.socket_addr, addr);
+        assert_eq!(
+            reopened
+                .db
+                .get_peer("conflict123")
+                .await
+                .unwrap()
+                .unwrap()
+                .uuid,
+            b"owner"
+        );
+        drop(peer);
+        drop(reopened);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
 
     #[test]
     fn change_id_checks_identity_and_preserves_peer() {

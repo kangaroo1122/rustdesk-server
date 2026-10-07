@@ -277,6 +277,20 @@ For this container image, you can use these environment variables, **in addition
 | KEY_PUB | yes | public part of the key pair |
 | KEY_PRIV | yes | private part of the key pair |
 
+### HBBS/API integration
+
+Set these variables on the S6 container to enable API login validation, device admission and central permissions:
+
+```yaml
+environment:
+  RUSTDESK_API_INTERNAL_URL: "http://127.0.0.1:21114"
+  RUSTDESK_API_CLIENT_COMPATIBILITY_INTERNAL_SECRET: "${RUSTDESK_INTERNAL_SECRET}"
+```
+
+Set `RUSTDESK_INTERNAL_SECRET` to a random secret of at least 32 bytes in the deployment environment. HBBS and API must use the same secret and share the local network namespace. The API URL must not include a path or query. Integration is disabled when `RUSTDESK_API_INTERNAL_URL` is unset; when enabled, API failure rejects new connections. `MUST_LOGIN=Y` requires user login. See the [API README](https://github.com/kangaroo1122/rustdesk-api/blob/master/README_EN.md) for device policies and recordings.
+
+WebRTC signaling requires HBBS key exchange (`-k`) and the matching server public key on clients. WebSocket deployments require WSS with long-lived connections; TURN must be deployed separately. Version 1.4.9 clients continue using the original connection protocol.
+
 ### Secret management in S6-overlay based images
 
 You can obviously keep the key pair in a docker volume, but the best practices tells you to not write the keys on the filesystem; so we provide a couple of options.

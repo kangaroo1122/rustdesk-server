@@ -257,6 +257,20 @@ Für dieses Container-Image können Sie diese Umgebungsvariablen verwenden, **zu
 | KEY_PUB | ja | Öffentlicher Teil des Schlüsselpaares |
 | KEY_PRIV | ja | Privater Teil des Schlüsselpaares |
 
+### HBBS/API-Integration
+
+Setzen Sie diese Variablen im S6-Container dieses Forks, um API-Anmeldeprüfung, Gerätefreigabe und zentrale Berechtigungen zu aktivieren:
+
+```yaml
+environment:
+  RUSTDESK_API_INTERNAL_URL: "http://127.0.0.1:21114"
+  RUSTDESK_API_CLIENT_COMPATIBILITY_INTERNAL_SECRET: "${RUSTDESK_INTERNAL_SECRET}"
+```
+
+Setzen Sie `RUSTDESK_INTERNAL_SECRET` in der Deployment-Umgebung auf einen zufälligen Schlüssel mit mindestens 32 Byte. HBBS und API müssen denselben Schlüssel und denselben lokalen Netzwerk-Namespace verwenden. Die API-URL darf keinen Pfad oder Abfrageparameter enthalten. Ohne `RUSTDESK_API_INTERNAL_URL` bleibt die Integration deaktiviert; bei aktivierter Integration werden neue Verbindungen abgewiesen, wenn die API nicht verfügbar ist. `MUST_LOGIN=Y` verlangt eine Benutzeranmeldung. Geräteregeln und Aufzeichnungen sind in der [API-README (Englisch)](https://github.com/kangaroo1122/rustdesk-api/blob/master/README_EN.md) beschrieben.
+
+WebRTC-Signalisierung benötigt den HBBS-Schlüsselaustausch (`-k`) und den passenden öffentlichen Serverschlüssel auf den Clients. WebSocket benötigt WSS mit dauerhaften Verbindungen; TURN muss separat bereitgestellt werden. Clients der Version 1.4.9 verwenden weiterhin das bisherige Verbindungsprotokoll.
+
 ### Verwaltung von Geheimnissen in S6-Overlay-basierten Images
 
 Sie können das Schlüsselpaar natürlich in einem Docker-Volume aufbewahren, aber empfehlenswert ist, die Schlüssel nicht in das Dateisystem zu schreiben.

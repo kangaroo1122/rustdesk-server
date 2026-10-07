@@ -31,6 +31,9 @@ pub fn generate_token(user_id: u32, exp: i64) -> Result<String, String> {
 }
 // 验证 JWT 的函数
 pub fn verify_token(token: &str) -> Result<Claims, String> {
+    if SECRET.is_empty() {
+        return Err("JWT signing key is not configured".into());
+    }
     // 解码 JWT
     let validation = Validation::new(Algorithm::HS256);
 
