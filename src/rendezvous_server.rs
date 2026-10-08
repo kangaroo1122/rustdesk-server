@@ -680,7 +680,8 @@ impl RendezvousServer {
                         .await
                     {
                         Ok(policy) => policy,
-                        Err(_) => {
+                        Err(err) => {
+                            log::warn!("Relay authorization failed: {err}");
                             let mut response = RendezvousMessage::new();
                             response.set_relay_response(RelayResponse { refuse_reason: "Connection authorization failed; please login or check server policy".into(), ..Default::default() });
                             self.respond_to_connection(sink, response, addr).await;
@@ -1146,7 +1147,8 @@ impl RendezvousServer {
             .await
         {
             Ok(policy) => policy,
-            Err(_) => {
+            Err(err) => {
+                log::warn!("Connection authorization failed: {err}");
                 let mut response = RendezvousMessage::new();
                 response.set_punch_hole_response(PunchHoleResponse {
                     other_failure:
