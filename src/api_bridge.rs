@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub fn configured() -> bool {
-    !std::env::var("RUSTDESK_API_INTERNAL_URL")
+    !std::env::var("RUSTDESK_API_CLIENT_COMPATIBILITY_INTERNAL_SECRET")
         .unwrap_or_default()
         .is_empty()
 }
@@ -19,7 +19,16 @@ fn client() -> ResultType<reqwest::Client> {
         .build()?)
 }
 fn base_url() -> ResultType<reqwest::Url> {
-    let url = reqwest::Url::parse(&std::env::var("RUSTDESK_API_INTERNAL_URL")?)?;
+    let configured = std::env::var("RUSTDESK_API_INTERNAL_URL").unwrap_or_default();
+    parse_base_url(&configured)
+}
+fn parse_base_url(configured: &str) -> ResultType<reqwest::Url> {
+    let origin = if configured.is_empty() {
+        "http://127.0.0.1:21114"
+    } else {
+        configured
+    };
+    let url = reqwest::Url::parse(origin)?;
     if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()
         || !url.username().is_empty()
@@ -176,6 +185,20 @@ pub async fn proxy(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn default_and_explicit_api_origins() {
+        assert_eq!(
+            parse_base_url("").unwrap().as_str(),
+            "http://127.0.0.1:21114/"
+        );
+        assert_eq!(
+            parse_base_url("http://api:21114").unwrap().host_str(),
+            Some("api")
+        );
+        for invalid in ["api:21114", "http://api:21114/api", "\"http://api:21114\""] {
+            assert!(parse_base_url(invalid).is_err());
+        }
+    }
     #[test]
     fn proxy_cannot_reach_administration_or_other_origins() {
         for p in [

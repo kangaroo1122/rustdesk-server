@@ -268,7 +268,7 @@ environment:
   RUSTDESK_API_CLIENT_COMPATIBILITY_INTERNAL_SECRET: "${RUSTDESK_INTERNAL_SECRET}"
 ```
 
-Stel `RUSTDESK_INTERNAL_SECRET` in de deploymentomgeving in op een willekeurige sleutel van minimaal 32 bytes. HBBS en de API moeten dezelfde sleutel en lokale netwerknamespace gebruiken. De API-URL mag geen pad of queryparameters bevatten. Zonder `RUSTDESK_API_INTERNAL_URL` blijft de integratie uitgeschakeld; als deze is ingeschakeld, worden nieuwe verbindingen geweigerd wanneer de API niet beschikbaar is. `MUST_LOGIN=Y` vereist dat gebruikers zich aanmelden. Zie de [API-README (Engels)](https://github.com/kangaroo1122/rustdesk-api/blob/master/README_EN.md) voor apparaatregels en opnamen.
+Stel `RUSTDESK_INTERNAL_SECRET` in de deploymentomgeving in op een willekeurige sleutel van minimaal 32 bytes. HBBS en de API moeten dezelfde sleutel en lokale netwerknamespace gebruiken. De API-URL mag geen pad of queryparameters bevatten. Een ontbrekende of lege `RUSTDESK_API_INTERNAL_URL` gebruikt `http://127.0.0.1:21114`. Een niet-lege `RUSTDESK_API_CLIENT_COMPATIBILITY_INTERNAL_SECRET` schakelt de integratie in; sleutels korter dan 32 bytes leiden tot geweigerde aanvragen; als deze is ingeschakeld, worden nieuwe verbindingen geweigerd wanneer de API niet beschikbaar is. `MUST_LOGIN=Y` vereist dat gebruikers zich aanmelden. Zie de [API-README (Engels)](https://github.com/kangaroo1122/rustdesk-api/blob/master/README_EN.md) voor apparaatregels en opnamen.
 
 WebRTC-signalering vereist HBBS-sleuteluitwisseling (`-k`) en de bijbehorende openbare serversleutel op clients. WebSocket vereist WSS met langdurige verbindingen; TURN moet apart worden ingericht. Clients met versie 1.4.9 blijven het oorspronkelijke verbindingsprotocol gebruiken.
 

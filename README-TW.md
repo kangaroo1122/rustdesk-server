@@ -268,7 +268,7 @@ environment:
   RUSTDESK_API_CLIENT_COMPATIBILITY_INTERNAL_SECRET: "${RUSTDESK_INTERNAL_SECRET}"
 ```
 
-在部署環境中將 `RUSTDESK_INTERNAL_SECRET` 設為至少 32 位元組的隨機密鑰，HBBS 與 API 使用相同值，並共用本機網路。API 位址不帶路徑或查詢參數。未設定 `RUSTDESK_API_INTERNAL_URL` 時不啟用整合；啟用後 API 無法使用會拒絕新連線。`MUST_LOGIN=Y` 要求使用者登入。裝置原則和錄影設定請參閱 [API README（簡體中文）](https://github.com/kangaroo1122/rustdesk-api/blob/master/README.md)。
+在部署環境中將 `RUSTDESK_INTERNAL_SECRET` 設為至少 32 位元組的隨機密鑰，HBBS 與 API 使用相同值，並共用本機網路。API 位址不帶路徑或查詢參數。`RUSTDESK_API_INTERNAL_URL` 未設定或為空時預設使用 `http://127.0.0.1:21114`。未配置 `RUSTDESK_API_CLIENT_COMPATIBILITY_INTERNAL_SECRET` 時不啟用整合；密鑰非空即啟用，但不足 32 位元組會拒絕整合請求；啟用後 API 無法使用會拒絕新連線。`MUST_LOGIN=Y` 要求使用者登入。裝置原則和錄影設定請參閱 [API README（簡體中文）](https://github.com/kangaroo1122/rustdesk-api/blob/master/README.md)。
 
 WebRTC 訊令要求 HBBS 啟用金鑰交換（`-k`），用戶端設定相符的伺服器公鑰。WebSocket 部署需提供 WSS 並保留長連線；TURN 需另外部署。1.4.9 用戶端繼續使用原連線協定。
 

@@ -287,7 +287,7 @@ environment:
   RUSTDESK_API_CLIENT_COMPATIBILITY_INTERNAL_SECRET: "${RUSTDESK_INTERNAL_SECRET}"
 ```
 
-Set `RUSTDESK_INTERNAL_SECRET` to a random secret of at least 32 bytes in the deployment environment. HBBS and API must use the same secret and share the local network namespace. The API URL must not include a path or query. Integration is disabled when `RUSTDESK_API_INTERNAL_URL` is unset; when enabled, API failure rejects new connections. `MUST_LOGIN=Y` requires user login. See the [API README](https://github.com/kangaroo1122/rustdesk-api/blob/master/README_EN.md) for device policies and recordings.
+Set `RUSTDESK_INTERNAL_SECRET` to a random secret of at least 32 bytes in the deployment environment. HBBS and API must use the same secret and share the local network namespace. The API URL must not include a path or query. `RUSTDESK_API_INTERNAL_URL` defaults to `http://127.0.0.1:21114` when unset or empty. Integration is enabled by a nonempty `RUSTDESK_API_CLIENT_COMPATIBILITY_INTERNAL_SECRET`; a secret shorter than 32 bytes rejects integration requests; when enabled, API failure rejects new connections. `MUST_LOGIN=Y` requires user login. See the [API README](https://github.com/kangaroo1122/rustdesk-api/blob/master/README_EN.md) for device policies and recordings.
 
 WebRTC signaling requires HBBS key exchange (`-k`) and the matching server public key on clients. WebSocket deployments require WSS with long-lived connections; TURN must be deployed separately. Version 1.4.9 clients continue using the original connection protocol.
 
