@@ -895,7 +895,14 @@ impl RendezvousServer {
             } else {
                 rk.pk.clone()
             };
-            match crate::api_bridge::admitted(&rk.id, &rk.uuid, &admission_pk).await {
+            match crate::api_bridge::admitted(
+                &rk.id,
+                &rk.uuid,
+                &admission_pk,
+                &addr.ip().to_string(),
+            )
+            .await
+            {
                 Ok(true) => {}
                 Ok(false) => return Err(register_pk_response::Result::NOT_DEPLOYED),
                 Err(_) => return Err(register_pk_response::Result::SERVER_ERROR),
@@ -1015,7 +1022,7 @@ impl RendezvousServer {
                     let peer = peer.read().await;
                     (peer.uuid.clone(), peer.pk.clone())
                 };
-                if !crate::api_bridge::admitted(&id, &uuid, &pk)
+                if !crate::api_bridge::admitted(&id, &uuid, &pk, &socket_addr.ip().to_string())
                     .await
                     .unwrap_or(false)
                 {

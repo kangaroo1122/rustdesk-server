@@ -88,10 +88,10 @@ pub async fn authorize(
     }
     Ok(policy)
 }
-pub async fn admitted(id: &str, uuid: &[u8], pk: &[u8]) -> ResultType<bool> {
+pub async fn admitted(id: &str, uuid: &[u8], pk: &[u8], source_ip: &str) -> ResultType<bool> {
     let response: Policy = internal(
         "/api/internal/client/admission",
-        &serde_json::json!({"id":id,"uuid":base64::encode(uuid),"pk":base64::encode(pk)}),
+        &serde_json::json!({"id":id,"uuid":base64::encode(uuid),"pk":base64::encode(pk),"source_ip":source_ip}),
     )
     .await?
     .json()
