@@ -13,6 +13,8 @@
 
 本服务提供设备注册、连接会合和中继转发，支持 IPv6、加密 TCP、WebSocket 和 WebRTC 信令。配合 API 可进行登录校验、设备身份同步、准入审批和集中权限管理，并为 Web Client 提供在线状态查询。
 
+[更新日志](CHANGELOG.md)
+
 ## 镜像与部署
 
 - S6 一体镜像：`ghcr.io/kangaroo1122/rustdesk-server-s6:<server-version>-api-<api-version>`

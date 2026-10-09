@@ -5,6 +5,8 @@
 
 De server verzorgt apparaatregistratie, verbindingsbemiddeling en relay, met ondersteuning voor IPv6, versleuteld TCP, WebSocket en WebRTC-signalering. De API-integratie biedt aanmeldcontrole, synchronisatie van apparaatidentiteiten, toelatingsgoedkeuring en centrale machtigingen, plus online-statuscontrole voor de Web Client.
 
+[Wijzigingslogboek](CHANGELOG.md)
+
 ## Images en implementatie
 
 - S6 alles-in-één-image: `ghcr.io/kangaroo1122/rustdesk-server-s6:<server-version>-api-<api-version>`

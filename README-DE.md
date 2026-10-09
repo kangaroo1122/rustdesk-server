@@ -5,6 +5,8 @@
 
 Der Server bietet Geräteregistrierung, Verbindungsvermittlung und Relay mit IPv6, verschlüsseltem TCP, WebSocket und WebRTC-Signalisierung. Die API-Anbindung ermöglicht Anmeldeprüfung, Geräteidentitätsabgleich, Zulassung und zentrale Berechtigungen sowie Online-Statusabfragen für den Web Client.
 
+[Änderungsprotokoll](CHANGELOG.md)
+
 ## Images und Bereitstellung
 
 - S6-Komplettimage: `ghcr.io/kangaroo1122/rustdesk-server-s6:<server-version>-api-<api-version>`

@@ -14,6 +14,8 @@ Related repositories:
 - Web Admin: [kangaroo1122/rustdesk-api-web](https://github.com/kangaroo1122/rustdesk-api-web), production branch `master`
 - Official upstream: [rustdesk/rustdesk-server](https://github.com/rustdesk/rustdesk-server)
 
+[Changelog](CHANGELOG.md)
+
 ## Images and deployment
 
 - S6 all-in-one: `ghcr.io/kangaroo1122/rustdesk-server-s6:<server-version>-api-<api-version>`
