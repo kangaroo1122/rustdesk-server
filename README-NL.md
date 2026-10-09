@@ -3,15 +3,20 @@
 
 [![build](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml)
 
-- Solves the issue of connection timeout when the client logs in with an `API` account
-- Added `API` support to the s6 image, `API` open-source repository: https://github.com/kangaroo1122/rustdesk-api
-- Whether login is required to connect, `MUST_LOGIN` defaults to `N`, set to `Y` to require login for connection
-- `RUSTDESK_API_JWT_KEY`, when set, validates the token's legitimacy through `JWT`
-- Support client websocket (client >= 1.4.1)
+De server verzorgt apparaatregistratie, verbindingsbemiddeling en relay, met ondersteuning voor IPv6, versleuteld TCP, WebSocket en WebRTC-signalering. De API-integratie biedt aanmeldcontrole, synchronisatie van apparaatidentiteiten, toelatingsgoedkeuring en centrale machtigingen, plus online-statuscontrole voor de Web Client.
 
-## docker
+## Images en implementatie
 
-- s6 Image [ghcr.io/kangaroo1122/rustdesk-server-s6](https://github.com/kangaroo1122/rustdesk-server/pkgs/container/rustdesk-server-s6)
+- S6 alles-in-één-image: `ghcr.io/kangaroo1122/rustdesk-server-s6:<server-version>-api-<api-version>`
+
+### Images bouwen
+
+- `docker-source.yml` bouwt S6 en Classic uit de API- en Web-branches `master` van dezelfde GitHub-eigenaar. Voor privérepositories is `SOURCE_REPOSITORIES_TOKEN` nodig.
+- `docker.yml` gebruikt een opgegeven API-imageversie voor S6 en bouwt ook Classic. De S6-tag is `<server-version>-api-<api-version>`.
+
+Bij bouwen uit broncode wordt `image_tag` ongewijzigd gebruikt. Vul voor `<server-version>-api-<api-version>` de volledige tag in; de API-versie wordt niet automatisch toegevoegd.
+
+### Implementatievoorbeeld
 
 ```yaml
  networks:
@@ -122,7 +127,7 @@ docker run --name hbbs --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-serv
 docker run --name hbbr --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr
 ```
 
-of zonder `--net=host`, maar een directe P2P verbinding zal niet werken.
+Poortmapping wordt ook ondersteund. P2P hangt af van NAT, firewallregels en poortconfiguratie.
 
 Voor systemen die SELinux gebruiken is het vervangen van `/root` door `/root:z` nodig om de containers correct te laten draaien. Als alternatief kan SELinux containerscheiding volledig worden uitgeschakeld door de optie `--security-opt label=disable` toe te voegen.
 
@@ -214,11 +219,11 @@ docker run --name rustdesk-server \
   -v "$PWD/data:/data" -d rustdesk/rustdesk-server-s6:latest
 ```
 
-of zonder `--net=host`, maar een directe P2P verbinding zal niet werken.
+Poortmapping wordt ook ondersteund. P2P hangt af van NAT, firewallregels en poortconfiguratie.
 
 ```bash
 docker run --name rustdesk-server \
-  -p 21115:21115 -p 21116:21116 -p 21116:21116/udp \
+  -p 21114:21114 -p 21115:21115 -p 21116:21116 -p 21116:21116/udp \
   -p 21117:21117 -p 21118:21118 -p 21119:21119 \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \

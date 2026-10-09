@@ -2,15 +2,20 @@
 
 [![build](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml)
 
-- 解决当客户端登录了`Api`账号时链接超时的问题
-- s6镜像添加了`Api`支持，`Api`开源地址 https://github.com/kangaroo1122/rustdesk-api
-- 是否必须登录才能链接， `MUST_LOGIN` 默认为 `N`，设置为 `Y` 则必须登录才能链接
-- `RUSTDESK_API_JWT_KEY`，设置后会通过`JWT`校验token的合法性
-- Support client websocket (client >= 1.4.1)
+本服務提供裝置註冊、連線會合與中繼轉發，支援 IPv6、加密 TCP、WebSocket 和 WebRTC 信令。配合 API 可進行登入驗證、裝置身分同步、准入審批與集中權限管理，並為 Web Client 提供線上狀態查詢。
 
-## docker镜像地址
+## 映像與部署
 
-- s6 镜像 [ghcr.io/kangaroo1122/rustdesk-server-s6](https://github.com/kangaroo1122/rustdesk-server/pkgs/container/rustdesk-server-s6)
+- S6 一體映像: `ghcr.io/kangaroo1122/rustdesk-server-s6:<server-version>-api-<api-version>`
+
+### 映像建置
+
+- `docker-source.yml`：從同一 GitHub owner 下 API 與 Web 的 `master` 分支建置 S6 和 Classic 映像。私有儲存庫需設定 `SOURCE_REPOSITORIES_TOKEN`。
+- `docker.yml`：使用指定版本的 API 映像組裝 S6，並建置 Classic；S6 標籤為 `<server-version>-api-<api-version>`。
+
+原始碼建置直接使用輸入的 `image_tag`。採用 `<server-version>-api-<api-version>` 命名時，需填寫完整標籤，工作流程不會自動附加 API 版本。
+
+### 部署範例
 
 ```yaml
  networks:
@@ -121,7 +126,7 @@ docker run --name hbbs --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-serv
 docker run --name hbbr --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr
 ```
 
-或刪去 `--net=host`， 但 P2P 直接連線會無法運作。
+也可使用連接埠對映。P2P 直接連線取決於 NAT、防火牆和連接埠設定。
 
 對於使用 SELinux 的系統，需要將 ``/root`` 替換為 ``/root:z``，以便容器正確運行。或者，也可以通過添加選項 ``--security-opt label=disable`` 完全禁用 SELinux 容器隔離。
 
@@ -214,11 +219,11 @@ docker run --name rustdesk-server \
   -v "$PWD/data:/data" -d rustdesk/rustdesk-server-s6:latest
 ```
 
-或刪去 `--net=host`， 但 P2P 直接連線會無法運作。
+也可使用連接埠對映。P2P 直接連線取決於 NAT、防火牆和連接埠設定。
 
 ```bash
 docker run --name rustdesk-server \
-  -p 21115:21115 -p 21116:21116 -p 21116:21116/udp \
+  -p 21114:21114 -p 21115:21115 -p 21116:21116 -p 21116:21116/udp \
   -p 21117:21117 -p 21118:21118 -p 21119:21119 \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \

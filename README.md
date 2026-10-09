@@ -11,15 +11,23 @@
 - Web Admin：[kangaroo1122/rustdesk-api-web](https://github.com/kangaroo1122/rustdesk-api-web)（线上分支 `master`）
 - 官方上游：[rustdesk/rustdesk-server](https://github.com/rustdesk/rustdesk-server)
 
-主要增强包括 API 登录兼容、`MUST_LOGIN`/JWT 校验、客户端 WebSocket、加密 TCP
-连接和 Web Client 在线状态查询。
+本服务提供设备注册、连接会合和中继转发，支持 IPv6、加密 TCP、WebSocket 和 WebRTC 信令。配合 API 可进行登录校验、设备身份同步、准入审批和集中权限管理，并为 Web Client 提供在线状态查询。
 
-## 发布镜像
+## 镜像与部署
 
 - S6 一体镜像：`ghcr.io/kangaroo1122/rustdesk-server-s6:<server-version>-api-<api-version>`
 - Classic 镜像：`ghcr.io/kangaroo1122/rustdesk-server:<server-version>`
 - 两类镜像同时维护 `latest`；生产部署建议固定精确版本。
 - Docker Hub 仅在仓库配置了相应凭据时同步发布，GHCR 是默认发布目标。
+
+### 镜像构建
+
+- `docker-source.yml`：拉取同一 GitHub owner 下 API 和 Web 的 `master` 源码，构建 S6 和 Classic 镜像。私有仓库需配置 `SOURCE_REPOSITORIES_TOKEN`。
+- `docker.yml`：使用指定版本的 API 镜像组装 S6，同时构建 Classic 镜像；S6 标签为 `<server-version>-api-<api-version>`。
+
+源码构建直接使用填写的 `image_tag`。按 `<server-version>-api-<api-version>` 命名时，需填写完整标签，工作流不会自动拼接 API 版本。
+
+### 部署示例
 
 ```yaml
  networks:
@@ -128,7 +136,7 @@ docker run --name hbbs --net=host -v "$PWD/data:/root" -d ghcr.io/kangaroo1122/r
 docker run --name hbbr --net=host -v "$PWD/data:/root" -d ghcr.io/kangaroo1122/rustdesk-server:latest hbbr
 ```
 
-或不使用 `--net=host` 参数启动， 但这样 P2P 直连功能将无法工作。
+也可使用端口映射。P2P 直连是否成功取决于 NAT、防火墙和端口配置。
 
 对于使用了 SELinux 的系统，您需要将 ``/root`` 替换为 ``/root:z``，以保证容器的正常运行。或者，也可以通过添加参数 ``--security-opt label=disable`` 来完全禁用 SELinux 容器隔离。
 
@@ -186,7 +194,7 @@ services:
 
 ## 基于 S6-overlay 的镜像
 
-S6 镜像以当前 fork 的精确版本 API 镜像为基础，加入 `hbbs`、`hbbr`、
+S6 镜像包含 API、`hbbs`、`hbbr`、
 `rustdesk-utils` 和 [S6-overlay](https://github.com/just-containers/s6-overlay)。容器内同时运行
 密钥初始化、`hbbr`、`hbbs` 和 API。默认发布到
 [GitHub Container Registry](https://github.com/kangaroo1122/rustdesk-server/pkgs/container/rustdesk-server-s6)。
@@ -198,7 +206,7 @@ S6 镜像以当前 fork 的精确版本 API 镜像为基础，加入 `hbbs`、`h
 | multiarch | 精确版本 | `ghcr.io/kangaroo1122/rustdesk-server-s6:<server-version>-api-<api-version>` |
 | 平台 | - | `linux/amd64`、`linux/arm64`、`linux/arm/v7` |
 
-生产环境建议使用包含 Server 和 API 精确版本的 multiarch 标签；`latest` 适合手动验证。
+生产环境建议使用构建时指定的精确版本标签。
 
 S6-overlay 负责一体镜像内各服务的启动顺序和进程监管，因此无需另外启动 API、hbbs 和 hbbr 容器。
 
@@ -217,11 +225,11 @@ docker run --name rustdesk-server \
   -d ghcr.io/kangaroo1122/rustdesk-server-s6:latest
 ```
 
-或刪去 `--net=host` 参数， 但 P2P 直连功能将无法工作。
+也可使用端口映射。P2P 直连是否成功取决于 NAT、防火墙和端口配置。
 
 ```bash
 docker run --name rustdesk-server \
-  -p 21115:21115 -p 21116:21116 -p 21116:21116/udp \
+  -p 21114:21114 -p 21115:21115 -p 21116:21116 -p 21116:21116/udp \
   -p 21117:21117 -p 21118:21118 -p 21119:21119 \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \

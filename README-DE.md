@@ -3,14 +3,20 @@
 
 [![build](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml)
 
-- Solves the issue of connection timeout when the client logs in with an `API` account
-- Added `API` support to the s6 image, `API` open-source repository: https://github.com/kangaroo1122/rustdesk-api
-- Whether login is required to connect, `MUST_LOGIN` defaults to `N`, set to `Y` to require login for connection
-- `RUSTDESK_API_JWT_KEY`, when set, validates the token's legitimacy through `JWT`
+Der Server bietet Geräteregistrierung, Verbindungsvermittlung und Relay mit IPv6, verschlüsseltem TCP, WebSocket und WebRTC-Signalisierung. Die API-Anbindung ermöglicht Anmeldeprüfung, Geräteidentitätsabgleich, Zulassung und zentrale Berechtigungen sowie Online-Statusabfragen für den Web Client.
 
-## docker
+## Images und Bereitstellung
 
-- s6 Image [ghcr.io/kangaroo1122/rustdesk-server-s6](https://github.com/kangaroo1122/rustdesk-server/pkgs/container/rustdesk-server-s6)
+- S6-Komplettimage: `ghcr.io/kangaroo1122/rustdesk-server-s6:<server-version>-api-<api-version>`
+
+### Image-Builds
+
+- `docker-source.yml` erstellt S6 und Classic aus den API- und Web-Branches `master` desselben GitHub-Owners. Private Repositorys benötigen `SOURCE_REPOSITORIES_TOKEN`.
+- `docker.yml` verwendet eine angegebene API-Image-Version für S6 und erstellt auch Classic. Der S6-Tag lautet `<server-version>-api-<api-version>`.
+
+Beim Quellcode-Build wird `image_tag` unverändert übernommen. Für das Schema `<server-version>-api-<api-version>` muss der vollständige Tag eingegeben werden; die API-Version wird nicht automatisch angehängt.
+
+### Bereitstellungsbeispiel
 
 ```yaml
  networks:
@@ -121,7 +127,7 @@ docker run --name hbbs --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-serv
 docker run --name hbbr --net=host -v "$PWD/data:/root" -d rustdesk/rustdesk-server:latest hbbr
 ```
 
-Oder ohne `--net=host`, aber die P2P-Direktverbindung kann dann nicht funktionieren.
+Portweiterleitung wird ebenfalls unterstützt. P2P hängt von NAT, Firewall und Portkonfiguration ab.
 
 Bei Systemen, die SELinux verwenden, muss `/root` durch `/root:z` ersetzt werden, damit die Container korrekt laufen. Alternativ kann die SELinux-Containertrennung durch Hinzufügen der Option `--security-opt label=disable` vollständig deaktiviert werden.
 
@@ -213,11 +219,11 @@ docker run --name rustdesk-server \
   -v "$PWD/data:/data" -d rustdesk/rustdesk-server-s6:latest
 ```
 
-oder ohne `--net=host`, aber die P2P-Direktverbindung kann dann nicht funktionieren.
+Portweiterleitung wird ebenfalls unterstützt. P2P hängt von NAT, Firewall und Portkonfiguration ab.
 
 ```bash
 docker run --name rustdesk-server \
-  -p 21115:21115 -p 21116:21116 -p 21116:21116/udp \
+  -p 21114:21114 -p 21115:21115 -p 21116:21116 -p 21116:21116/udp \
   -p 21117:21117 -p 21118:21118 -p 21119:21119 \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \

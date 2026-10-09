@@ -4,9 +4,9 @@
 [![build](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml/badge.svg?branch=forapi)](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml)
 [![test](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/test.yml/badge.svg?branch=forapi)](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/test.yml)
 
-This repository is the enhanced server fork used by the kangaroo1122 deployment. The production
-branch is `forapi`; it tracks stable upstream releases while preserving the API login integration,
-`MUST_LOGIN`/JWT validation, encrypted TCP, client WebSocket support, and Web Client online queries.
+This fork tracks stable upstream releases on the production branch `forapi`.
+
+The server provides device registration, rendezvous, and relay services, with IPv6, encrypted TCP, WebSocket, and WebRTC signaling support. API integration adds login checks, device identity synchronization, admission approval, and centralized permissions, as well as online status queries for the Web Client.
 
 Related repositories:
 
@@ -14,12 +14,21 @@ Related repositories:
 - Web Admin: [kangaroo1122/rustdesk-api-web](https://github.com/kangaroo1122/rustdesk-api-web), production branch `master`
 - Official upstream: [rustdesk/rustdesk-server](https://github.com/rustdesk/rustdesk-server)
 
-## Published images
+## Images and deployment
 
 - S6 all-in-one: `ghcr.io/kangaroo1122/rustdesk-server-s6:<server-version>-api-<api-version>`
 - Classic: `ghcr.io/kangaroo1122/rustdesk-server:<server-version>`
 - Both also publish `latest`; pin exact versions for production.
 - Docker Hub publishing is optional, while GHCR is always the primary target.
+
+### Image builds
+
+- `docker-source.yml` builds S6 and Classic images from the API and Web `master` branches under the same GitHub owner. Private repositories require `SOURCE_REPOSITORIES_TOKEN`.
+- `docker.yml` assembles S6 using a specified API image version and also builds Classic. Its S6 tag is `<server-version>-api-<api-version>`.
+
+Source builds use `image_tag` as entered. To follow the `<server-version>-api-<api-version>` naming convention, enter the complete tag; the workflow does not append the API version.
+
+### Deployment example
 
 ```yaml
  networks:
@@ -140,7 +149,7 @@ docker run --name hbbs --net=host -v "$PWD/data:/root" -d ghcr.io/kangaroo1122/r
 docker run --name hbbr --net=host -v "$PWD/data:/root" -d ghcr.io/kangaroo1122/rustdesk-server:latest hbbr
 ```
 
-or without `--net=host`, but P2P direct connection can not work.
+Port mapping is also supported. P2P connectivity depends on NAT, firewall rules, and port configuration.
 
 For systems using SELinux, replacing `/root` by `/root:z` is required for the containers to run correctly. Alternatively, SELinux container separation can be disabled completely adding the option `--security-opt label=disable`.
 
@@ -198,7 +207,7 @@ Edit line 16 to point to your relay server (the one listening on port 21117). Yo
 
 ## S6-overlay based images
 
-The S6 image starts from an exact version of this fork's API image and adds `hbbs`, `hbbr`,
+The S6 image includes the API, `hbbs`, `hbbr`,
 `rustdesk-utils`, and [S6-overlay](https://github.com/just-containers/s6-overlay). It is published to
 [GHCR](https://github.com/kangaroo1122/rustdesk-server/pkgs/container/rustdesk-server-s6).
 
@@ -206,7 +215,7 @@ The S6 image starts from an exact version of this fork's API image and adds `hbb
 * arm64v8
 * armv7
 
-Use the combined Server/API version tag in production:
+Use the exact image tag specified during the build for production:
 
 | Version | image:tag |
 | --- | --- |
@@ -230,11 +239,11 @@ docker run --name rustdesk-server \
   -d ghcr.io/kangaroo1122/rustdesk-server-s6:latest
 ```
 
-or without `--net=host`, but P2P direct connection cannot work.
+Port mapping is also supported. P2P connectivity depends on NAT, firewall rules, and port configuration.
 
 ```bash
 docker run --name rustdesk-server \
-  -p 21115:21115 -p 21116:21116 -p 21116:21116/udp \
+  -p 21114:21114 -p 21115:21115 -p 21116:21116 -p 21116:21116/udp \
   -p 21117:21117 -p 21118:21118 -p 21119:21119 \
   -e "RELAY=rustdeskrelay.example.com" \
   -e "ENCRYPTED_ONLY=1" \
