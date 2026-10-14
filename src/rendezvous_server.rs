@@ -533,6 +533,21 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::LocalAddr(la)) => {
                     self.handle_local_addr(la, addr, Some(socket)).await?;
                 }
+                Some(rendezvous_message::Union::TestNatRequest(tar)) => {
+                    let mut msg_out = RendezvousMessage::new();
+                    let mut res = TestNatResponse {
+                        port: addr.port() as _,
+                        ..Default::default()
+                    };
+                    if self.inner.serial > tar.serial {
+                        let mut cu = ConfigUpdate::new();
+                        cu.serial = self.inner.serial;
+                        cu.rendezvous_servers = (*self.rendezvous_servers).clone();
+                        res.cu = MessageField::from_option(Some(cu));
+                    }
+                    msg_out.set_test_nat_response(res);
+                    socket.send(&msg_out, addr).await?;
+                }
                 Some(rendezvous_message::Union::ConfigureUpdate(mut cu)) => {
                     if try_into_v4(addr).ip().is_loopback() && cu.serial > self.inner.serial {
                         let mut inner: Inner = (*self.inner).clone();
@@ -2584,6 +2599,56 @@ mod compatibility_tests {
         drop(server);
         std::fs::remove_file(path).unwrap();
     }
+    #[tokio::test]
+    async fn udp_nat_probe_returns_observed_port_and_config() {
+        let (mut server, _deliveries, _pk, path) = server().await;
+        Arc::make_mut(&mut server.inner).serial = 7;
+        server.rendezvous_servers = Arc::new(vec!["rendezvous.example".into()]);
+        let mut socket = FramedSocket::new("127.0.0.1:0").await.unwrap();
+        let client = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr = client.local_addr().unwrap();
+        for serial in [0, 7, 8] {
+            // Legacy and current clients share the NAT probe wire format.
+            let mut request = legacy::RendezvousMessage::new();
+            request.set_test_nat_request(legacy::TestNatRequest {
+                serial,
+                ..Default::default()
+            });
+            client
+                .send_to(
+                    &request.write_to_bytes().unwrap(),
+                    socket.local_addr().unwrap(),
+                )
+                .await
+                .unwrap();
+            let (bytes, source) = timeout(2000, socket.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            server
+                .handle_udp(&bytes, source.into(), &mut socket, "")
+                .await
+                .unwrap();
+            let mut bytes = [0u8; 2048];
+            let (len, _) = timeout(2000, client.recv_from(&mut bytes))
+                .await
+                .unwrap()
+                .unwrap();
+            let response = legacy::RendezvousMessage::parse_from_bytes(&bytes[..len]).unwrap();
+            assert!(response.has_test_nat_response());
+            let response = response.test_nat_response();
+            assert_eq!(response.port, addr.port() as i32);
+            assert_eq!(response.cu.is_some(), serial < 7);
+            if serial < 7 {
+                assert_eq!(response.cu.serial, 7);
+                assert_eq!(response.cu.rendezvous_servers, vec!["rendezvous.example"]);
+            }
+        }
+        drop(server);
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[tokio::test]
     async fn ipv6_addresses_survive_lan_and_wan_rendezvous() {
         let (mut server, mut deliveries, pk, path) = server().await;
