@@ -3,7 +3,7 @@
 
 [![build](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml)
 
-Der Server bietet Geräteregistrierung, Verbindungsvermittlung und Relay mit IPv6, verschlüsseltem TCP, WebSocket und WebRTC-Signalisierung. Die API-Anbindung ermöglicht Anmeldeprüfung, Geräteidentitätsabgleich, Zulassung und zentrale Berechtigungen sowie Online-Statusabfragen für den Web Client.
+Der Server bietet Geräteregistrierung, Verbindungsvermittlung und Relay mit IPv6, verschlüsseltem TCP, WebSocket und WebRTC-Signalisierung. Die API-Anbindung ermöglicht Anmeldeprüfung, Geräteidentitätsabgleich, Zulassung und zentrale Berechtigungen.
 
 [Änderungsprotokoll](CHANGELOG.md)
 

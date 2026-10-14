@@ -2,7 +2,7 @@
 
 [![build](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml)
 
-本服務提供裝置註冊、連線會合與中繼轉發，支援 IPv6、加密 TCP、WebSocket 和 WebRTC 信令。配合 API 可進行登入驗證、裝置身分同步、准入審批與集中權限管理，並為 Web Client 提供線上狀態查詢。
+本服務提供裝置註冊、連線會合與中繼轉發，支援 IPv6、加密 TCP、WebSocket 和 WebRTC 信令。配合 API 可進行登入驗證、裝置身分同步、准入審批與集中權限管理。
 
 [更新日誌](CHANGELOG.md)
 

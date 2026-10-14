@@ -6,7 +6,7 @@
 
 This fork tracks stable upstream releases on the production branch `forapi`.
 
-The server provides device registration, rendezvous, and relay services, with IPv6, encrypted TCP, WebSocket, and WebRTC signaling support. API integration adds login checks, device identity synchronization, admission approval, and centralized permissions, as well as online status queries for the Web Client.
+The server provides device registration, rendezvous, and relay services, with IPv6, encrypted TCP, WebSocket, and WebRTC signaling support. API integration adds login checks, device identity synchronization, admission approval, and centralized permissions.
 
 Related repositories:
 

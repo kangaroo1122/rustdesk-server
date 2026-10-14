@@ -3,7 +3,7 @@
 
 [![build](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/kangaroo1122/rustdesk-server/actions/workflows/build.yaml)
 
-De server verzorgt apparaatregistratie, verbindingsbemiddeling en relay, met ondersteuning voor IPv6, versleuteld TCP, WebSocket en WebRTC-signalering. De API-integratie biedt aanmeldcontrole, synchronisatie van apparaatidentiteiten, toelatingsgoedkeuring en centrale machtigingen, plus online-statuscontrole voor de Web Client.
+De server verzorgt apparaatregistratie, verbindingsbemiddeling en relay, met ondersteuning voor IPv6, versleuteld TCP, WebSocket en WebRTC-signalering. De API-integratie biedt aanmeldcontrole, synchronisatie van apparaatidentiteiten, toelatingsgoedkeuring en centrale machtigingen.
 
 [Wijzigingslogboek](CHANGELOG.md)
 

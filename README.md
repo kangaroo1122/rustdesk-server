@@ -11,7 +11,7 @@
 - Web Admin：[kangaroo1122/rustdesk-api-web](https://github.com/kangaroo1122/rustdesk-api-web)（线上分支 `master`）
 - 官方上游：[rustdesk/rustdesk-server](https://github.com/rustdesk/rustdesk-server)
 
-本服务提供设备注册、连接会合和中继转发，支持 IPv6、加密 TCP、WebSocket 和 WebRTC 信令。配合 API 可进行登录校验、设备身份同步、准入审批和集中权限管理，并为 Web Client 提供在线状态查询。
+本服务提供设备注册、连接会合和中继转发，支持 IPv6、加密 TCP、WebSocket 和 WebRTC 信令。配合 API 可进行登录校验、设备身份同步、准入审批和集中权限管理。
 
 [更新日志](CHANGELOG.md)
 
